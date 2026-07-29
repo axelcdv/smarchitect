@@ -12,6 +12,7 @@ levels:
     name: Ground floor
     baseElevationMm: 0
     defaultWallHeightMm: 2500
+    walls: []
     extensions: {}
 extensions: {}
 `;

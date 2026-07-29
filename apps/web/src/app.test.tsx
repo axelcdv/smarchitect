@@ -47,6 +47,56 @@ describe("minimal Project Workspace", () => {
     ).toBeInTheDocument();
   });
 
+  it("draws, selects, numerically edits, and deletes a Wall while updating YAML", () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Wall editor" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    const plan = screen.getByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+
+    expect(screen.getByText("1 wall")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Wall length (mm)"), {
+      target: { value: "4200" }
+    });
+    fireEvent.change(screen.getByLabelText("Wall thickness (mm)"), {
+      target: { value: "220" }
+    });
+    fireEvent.change(screen.getByLabelText("Wall angle (deg)"), {
+      target: { value: "53.13" }
+    });
+    fireEvent.change(screen.getByLabelText("Wall height (mm)"), {
+      target: { value: "2800" }
+    });
+    expect(screen.getByLabelText("Wall angle (deg)")).toHaveValue(53.13);
+    expect(screen.getByLabelText("Wall height (mm)")).toHaveValue(2800);
+
+    fireEvent.change(screen.getByLabelText("Start Y (mm)"), {
+      target: { value: "200" }
+    });
+    fireEvent.pointerDown(plan, { clientX: 226, clientY: 82 });
+    fireEvent.pointerUp(plan, { clientX: 276, clientY: 82 });
+
+    const yaml = (screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value;
+    expect(yaml).toContain("thicknessMm: 220");
+    expect(yaml).toContain("heightMm: 2800");
+    expect(yaml).toContain("x: -2500");
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete wall" }));
+    expect(screen.getByText("0 walls")).toBeInTheDocument();
+  });
+
   it("imports a Project Document and exports it as YAML", async () => {
     const yaml = ProjectWorkspace.create("Imported apartment").exportYaml();
     const file = new File([yaml], "apartment.yaml", {

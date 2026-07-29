@@ -10,7 +10,9 @@ import {
 function deterministicIdFactory(): () => string {
   const ids = [
     "project_00000000-0000-4000-8000-000000000001",
-    "level_00000000-0000-4000-8000-000000000002"
+    "level_00000000-0000-4000-8000-000000000002",
+    "wall_00000000-0000-4000-8000-000000000003",
+    "wall_00000000-0000-4000-8000-000000000004"
   ];
 
   return () => {
@@ -42,12 +44,68 @@ describe("Project Workspace acceptance seam", () => {
           name: "Ground floor",
           baseElevationMm: 0,
           defaultWallHeightMm: 2500,
+          walls: [],
           extensions: {}
         }
       ],
       extensions: {}
     });
     expect(validateProjectDocument(document)).toEqual([]);
+  });
+
+  it("adds, edits, moves, and deletes straight Walls without measurement drift", () => {
+    const workspace = ProjectWorkspace.create("Measured home", {
+      idFactory: deterministicIdFactory()
+    });
+    const withWall = workspace.addWall({
+      start: { x: 100, y: 200 },
+      end: { x: 3100, y: 200 }
+    });
+    const wallId = withWall.activeLevel.walls[0]!.id;
+    const edited = withWall.updateWall(wallId, {
+      lengthMm: 2500,
+      angleDeg: 90,
+      thicknessMm: 180,
+      heightMm: 2800
+    });
+    const moved = edited.moveWall(wallId, { x: 400, y: -100 });
+    const repeated = moved.updateWall(wallId, {
+      lengthMm: 2500,
+      angleDeg: 90
+    });
+
+    expect(repeated.activeLevel.walls[0]).toMatchObject({
+      path: {
+        kind: "straight",
+        start: { x: 500, y: 100 },
+        end: { x: 500, y: 2600 }
+      },
+      thicknessMm: 180,
+      heightMm: 2800
+    });
+    expect(repeated.exportYaml()).toContain("kind: straight");
+    expect(repeated.deleteWall(wallId).activeLevel.walls).toEqual([]);
+  });
+
+  it("applies repeated decimal angle edits without accumulating drift", () => {
+    const workspace = ProjectWorkspace.create("Angled home", {
+      idFactory: deterministicIdFactory()
+    }).addWall({
+      start: { x: 0, y: 0 },
+      end: { x: 3000, y: 0 }
+    });
+    const wallId = workspace.activeLevel.walls[0]!.id;
+
+    const once = workspace.updateWall(wallId, { angleDeg: -306.87 });
+    const repeated = once.updateWall(wallId, { angleDeg: 53.13 });
+
+    expect(repeated.activeLevel.walls[0]!.path).toEqual(
+      once.activeLevel.walls[0]!.path
+    );
+    expect(repeated.activeLevel.walls[0]!.path.end).toEqual({
+      x: 1800,
+      y: 2400
+    });
   });
 
   it("renames, exports, and imports through one workspace boundary", () => {
@@ -112,6 +170,30 @@ extensions: {}
     expect(result.diagnostics.map(({ code }) => code)).toEqual(
       expect.arrayContaining(["stable-id.invalid", "dimension.non-positive"])
     );
+  });
+
+  it("rejects zero-length Walls as a semantic geometry invariant", () => {
+    const document = createProjectDocument("Invalid geometry", {
+      idFactory: deterministicIdFactory()
+    });
+    document.levels[0]!.walls.push({
+      id: "wall_00000000-0000-4000-8000-000000000003",
+      path: {
+        kind: "straight",
+        start: { x: 100, y: 200 },
+        end: { x: 100, y: 200 }
+      },
+      thicknessMm: 150,
+      heightMm: 2500,
+      extensions: {}
+    });
+
+    expect(validateProjectDocument(document)).toContainEqual({
+      code: "wall.length.zero",
+      severity: "error",
+      path: "/levels/0/walls/0/path/end",
+      message: "Wall path must have distinct start and end points."
+    });
   });
 
   it("rejects aliases and custom YAML tags", () => {

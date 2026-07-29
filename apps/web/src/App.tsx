@@ -1,6 +1,35 @@
-import { ProjectValidationError, ProjectWorkspace } from "@smarchitect/core";
-import { useRef, useState, type ChangeEvent } from "react";
+import {
+  deriveWallFaces,
+  deriveWallJunctions,
+  findWallAtPoint,
+  findWallEndpointAtPoint,
+  ProjectValidationError,
+  ProjectWorkspace,
+  snapAngle,
+  snapPoint,
+  snapWallDelta,
+  wallAngleDeg,
+  type PointMm,
+  type Wall
+} from "@smarchitect/core";
+import {
+  useRef,
+  useState,
+  type ChangeEvent,
+  type PointerEvent,
+  type WheelEvent
+} from "react";
 import "./styles.css";
+
+type WallEditField =
+  | "startX" | "startY" | "endX" | "endY"
+  | "lengthMm" | "angleDeg" | "thicknessMm" | "heightMm";
+
+function wallPolygonPoints(wall: Wall): string {
+  return deriveWallFaces(wall)
+    .map(({ x, y }) => `${x},${-y}`)
+    .join(" ");
+}
 
 function downloadYaml(source: string, projectName: string): void {
   const blob = new Blob([source], { type: "application/yaml" });
@@ -22,10 +51,115 @@ export function App() {
   const [workspace, setWorkspace] = useState<ProjectWorkspace>();
   const [yaml, setYaml] = useState("");
   const [error, setError] = useState("");
+  const [selectedWallId, setSelectedWallId] = useState<string>();
+  const [mode, setMode] = useState<"draw" | "select">("draw");
+  const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
+  const [gesture, setGesture] = useState<
+    | { kind: "draw"; start: PointMm }
+    | { kind: "move"; wallId: string; start: PointMm }
+    | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
+  >();
   const importInput = useRef<HTMLInputElement>(null);
   const document = workspace?.document;
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
+  const walls = activeLevel?.walls ?? [];
+  const selectedWall = walls.find(({ id }) => id === selectedWallId);
+
+  function commit(next: ProjectWorkspace): void {
+    setWorkspace(next);
+    setYaml(next.exportYaml());
+    setError("");
+  }
+
+  function clientPoint(svg: SVGSVGElement, clientX: number, clientY: number): PointMm {
+    const bounds = svg.getBoundingClientRect();
+    return {
+      x: Math.round(view.x + (clientX - bounds.left) / bounds.width * view.width),
+      y: Math.round(-(view.y + (clientY - bounds.top) / bounds.height * view.height))
+    };
+  }
+
+  function eventPoint(event: PointerEvent<SVGSVGElement>): PointMm {
+    return clientPoint(event.currentTarget, event.clientX, event.clientY);
+  }
+
+  function beginPlanGesture(event: PointerEvent<SVGSVGElement>): void {
+    const point = eventPoint(event);
+    const snapTolerance = view.width / 80;
+    if (mode === "draw") {
+      setGesture({ kind: "draw", start: snapPoint(point, walls, snapTolerance) });
+      return;
+    }
+
+    const endpointHit = selectedWall
+      ? findWallEndpointAtPoint(point, [selectedWall], view.width / 160)
+      : undefined;
+    if (endpointHit) {
+      setGesture({
+        kind: "endpoint",
+        wallId: endpointHit.wallId,
+        endpoint: endpointHit.endpoint
+      });
+      return;
+    }
+
+    const wall = findWallAtPoint(point, walls, view.width / 400);
+    setSelectedWallId(wall?.id);
+    if (wall) {
+      setGesture({ kind: "move", wallId: wall.id, start: point });
+    }
+  }
+
+  function finishPlanGesture(event: PointerEvent<SVGSVGElement>): void {
+    if (!workspace || !gesture) return;
+    const point = eventPoint(event);
+    if (gesture.kind === "draw") {
+      const exactSnap = snapPoint(point, walls, view.width / 80);
+      const snapped = exactSnap.x !== point.x || exactSnap.y !== point.y
+        ? exactSnap
+        : snapAngle(gesture.start, point);
+      if (snapped.x !== gesture.start.x || snapped.y !== gesture.start.y) {
+        const next = workspace.addWall({ start: gesture.start, end: snapped });
+        commit(next);
+        setSelectedWallId(next.activeLevel.walls.at(-1)?.id);
+        setMode("select");
+      }
+    } else if (gesture.kind === "move") {
+      const wall = walls.find(({ id }) => id === gesture.wallId);
+      if (wall) {
+        const delta = snapWallDelta(wall, {
+          x: point.x - gesture.start.x,
+          y: point.y - gesture.start.y
+        }, walls.filter(({ id }) => id !== wall.id), view.width / 80);
+        commit(workspace.moveWall(gesture.wallId, delta));
+      }
+    } else {
+      const wall = walls.find(({ id }) => id === gesture.wallId);
+      if (wall) {
+        const other = gesture.endpoint === "start" ? wall.path.end : wall.path.start;
+        const candidates = walls.filter(({ id }) => id !== wall.id);
+        const snapped = snapPoint(point, candidates, view.width / 80);
+        const hasExactSnap = snapped.x !== point.x || snapped.y !== point.y;
+        commit(workspace.updateWall(wall.id, {
+          [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
+        }));
+      }
+    }
+    setGesture(undefined);
+  }
+
+  function editSelected(field: WallEditField, value: string): void {
+    if (!workspace || !selectedWall || !value) return;
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    const update = field === "startX" ? { start: { ...selectedWall.path.start, x: Math.round(numeric) } }
+      : field === "startY" ? { start: { ...selectedWall.path.start, y: Math.round(numeric) } }
+      : field === "endX" ? { end: { ...selectedWall.path.end, x: Math.round(numeric) } }
+      : field === "endY" ? { end: { ...selectedWall.path.end, y: Math.round(numeric) } }
+      : { [field]: field === "angleDeg" ? numeric : Math.round(numeric) };
+    commit(workspace.updateWall(selectedWall.id, update));
+  }
 
   function createProject(): void {
     try {
@@ -210,31 +344,89 @@ export function App() {
             </div>
             <span className="scale-chip">Metric · millimetres</span>
           </div>
+          <div className="plan-toolbar">
+            <button className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
+            <button className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
+            <span>{walls.length} {walls.length === 1 ? "wall" : "walls"}</span>
+            <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
+            <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
+            <button type="button" aria-label="Pan left" onClick={() => setView((current) => ({ ...current, x: current.x - current.width / 10 }))}>←</button>
+            <button type="button" aria-label="Pan right" onClick={() => setView((current) => ({ ...current, x: current.x + current.width / 10 }))}>→</button>
+            <button type="button" aria-label="Pan up" onClick={() => setView((current) => ({ ...current, y: current.y - current.height / 10 }))}>↑</button>
+            <button type="button" aria-label="Pan down" onClick={() => setView((current) => ({ ...current, y: current.y + current.height / 10 }))}>↓</button>
+          </div>
           <svg
-            className="empty-plan"
-            viewBox="0 0 800 520"
-            role="img"
-            aria-label="Empty Ground floor plan"
+            className="wall-plan"
+            viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
+            role="application"
+            aria-label={`${activeLevel.name} wall editor`}
+            onPointerDown={beginPlanGesture}
+            onPointerUp={finishPlanGesture}
+            onWheel={(event: WheelEvent<SVGSVGElement>) => {
+              event.preventDefault();
+              const factor = event.deltaY > 0 ? 1.1 : .9;
+              setView((current) => ({ ...current, width: current.width * factor, height: current.height * factor }));
+            }}
           >
             <defs>
               <pattern
                 id="grid"
-                width="20"
-                height="20"
+                width="500"
+                height="500"
                 patternUnits="userSpaceOnUse"
               >
-                <path d="M 20 0 L 0 0 0 20" fill="none" />
+                <path d="M 500 0 L 0 0 0 500" fill="none" />
               </pattern>
             </defs>
-            <rect width="800" height="520" fill="url(#grid)" />
-            <g className="empty-plan-message">
-              <circle cx="400" cy="228" r="34" />
-              <path d="M384 228h32M400 212v32" />
-              <text x="400" y="294" textAnchor="middle">
-                Wall drawing arrives in the next tracer
-              </text>
-            </g>
+            <rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#grid)" />
+            <path
+              className="wall-surface"
+              d={walls.map((wall) => {
+                const [first, ...rest] = deriveWallFaces(wall);
+                return first
+                  ? `M ${first.x} ${-first.y} ${rest.map(({ x, y }) => `L ${x} ${-y}`).join(" ")} Z`
+                  : "";
+              }).join(" ")}
+            />
+            {selectedWall ? (
+              <polygon
+                className="selected-wall"
+                points={wallPolygonPoints(selectedWall)}
+              />
+            ) : null}
+            {deriveWallJunctions(walls).map(({ point }) => (
+              <circle className="junction" key={`${point.x}:${point.y}`} cx={point.x} cy={-point.y} r={view.width / 220} />
+            ))}
+            {selectedWall ? (["start", "end"] as const).map((endpoint) => (
+              <circle
+                key={endpoint}
+                className="endpoint-handle"
+                cx={selectedWall.path[endpoint].x}
+                cy={-selectedWall.path[endpoint].y}
+                r={view.width / 160}
+              />
+            )) : null}
           </svg>
+          {selectedWall ? (
+            <div className="wall-properties" aria-label="Selected wall properties">
+              {([
+                ["startX", "Start X (mm)", selectedWall.path.start.x],
+                ["startY", "Start Y (mm)", selectedWall.path.start.y],
+                ["endX", "End X (mm)", selectedWall.path.end.x],
+                ["endY", "End Y (mm)", selectedWall.path.end.y],
+                ["lengthMm", "Wall length (mm)", Math.round(Math.hypot(selectedWall.path.end.x - selectedWall.path.start.x, selectedWall.path.end.y - selectedWall.path.start.y))],
+                ["angleDeg", "Wall angle (deg)", Number(wallAngleDeg(selectedWall).toFixed(2))],
+                ["thicknessMm", "Wall thickness (mm)", selectedWall.thicknessMm],
+                ["heightMm", "Wall height (mm)", selectedWall.heightMm]
+              ] satisfies [WallEditField, string, number][]).map(([field, label, value]) => (
+                <label key={field}><span>{label}</span><input aria-label={label} type="number" step={field === "angleDeg" ? "any" : 1} value={value} onChange={(event) => editSelected(field, event.target.value)} /></label>
+              ))}
+              <button type="button" className="danger-button" onClick={() => {
+                commit(workspace.deleteWall(selectedWall.id));
+                setSelectedWallId(undefined);
+              }}>Delete wall</button>
+            </div>
+          ) : null}
         </section>
 
         <section className="yaml-panel" aria-labelledby="yaml-title">
