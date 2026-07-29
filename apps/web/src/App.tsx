@@ -13,12 +13,18 @@ import {
   type Wall
 } from "@smarchitect/core";
 import {
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
   type PointerEvent,
   type WheelEvent
 } from "react";
+import {
+  AutosavedProject,
+  IndexedDbProjectRepository,
+  SerializedProjectRepository
+} from "./project-persistence.js";
 import "./styles.css";
 
 type WallEditField =
@@ -49,6 +55,10 @@ function downloadYaml(source: string, projectName: string): void {
 export function App() {
   const [draftName, setDraftName] = useState("");
   const [workspace, setWorkspace] = useState<ProjectWorkspace>();
+  const [historyControls, setHistoryControls] = useState({
+    canUndo: false,
+    canRedo: false
+  });
   const [yaml, setYaml] = useState("");
   const [error, setError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
@@ -60,16 +70,71 @@ export function App() {
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
   >();
   const importInput = useRef<HTMLInputElement>(null);
+  const repository = useRef(
+    new SerializedProjectRepository(new IndexedDbProjectRepository())
+  );
+  const autosavedProject = useRef<AutosavedProject | undefined>(undefined);
   const document = workspace?.document;
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
 
-  function commit(next: ProjectWorkspace): void {
+  function refreshHistoryControls(project: AutosavedProject): void {
+    setHistoryControls({
+      canUndo: project.canUndo,
+      canRedo: project.canRedo
+    });
+  }
+
+  useEffect(() => {
+    let active = true;
+    void AutosavedProject.restore(repository.current)
+      .then((restored) => {
+        if (!active || !restored || autosavedProject.current) return;
+        autosavedProject.current = restored;
+        setWorkspace(restored.workspace);
+        setYaml(restored.workspace.exportYaml());
+        setDraftName(restored.workspace.document.name);
+        refreshHistoryControls(restored);
+      })
+      .catch(() => {
+        if (active && !autosavedProject.current) {
+          setError("Local recovery is unavailable. New edits may not survive reload.");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function show(next: ProjectWorkspace): void {
     setWorkspace(next);
     setYaml(next.exportYaml());
     setError("");
+  }
+
+  function commit(next: ProjectWorkspace): void {
+    autosavedProject.current?.accept(next);
+    show(next);
+    if (autosavedProject.current) {
+      refreshHistoryControls(autosavedProject.current);
+    }
+  }
+
+  function startAutosave(next: ProjectWorkspace): void {
+    autosavedProject.current = AutosavedProject.create(next, repository.current);
+    show(next);
+    refreshHistoryControls(autosavedProject.current);
+  }
+
+  function navigateHistory(direction: "undo" | "redo"): void {
+    const project = autosavedProject.current;
+    if (!project) return;
+    const restored = direction === "undo" ? project.undo() : project.redo();
+    show(restored);
+    setSelectedWallId(undefined);
+    refreshHistoryControls(project);
   }
 
   function clientPoint(svg: SVGSVGElement, clientX: number, clientY: number): PointMm {
@@ -164,9 +229,7 @@ export function App() {
   function createProject(): void {
     try {
       const created = ProjectWorkspace.create(draftName);
-      setWorkspace(created);
-      setYaml(created.exportYaml());
-      setError("");
+      startAutosave(created);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to create project.");
     }
@@ -179,9 +242,7 @@ export function App() {
 
     try {
       const renamedWorkspace = workspace.rename(event.target.value);
-      setWorkspace(renamedWorkspace);
-      setYaml(renamedWorkspace.exportYaml());
-      setError("");
+      commit(renamedWorkspace);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to rename project.");
     }
@@ -196,8 +257,7 @@ export function App() {
 
     try {
       const imported = ProjectWorkspace.importYaml(await file.text());
-      setWorkspace(imported);
-      setYaml(imported.exportYaml());
+      startAutosave(imported);
       setDraftName(imported.document.name);
       setError("");
     } catch (cause) {
@@ -273,6 +333,22 @@ export function App() {
           <h1>{document.name}</h1>
         </div>
         <div className="header-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={!historyControls.canUndo}
+            onClick={() => navigateHistory("undo")}
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={!historyControls.canRedo}
+            onClick={() => navigateHistory("redo")}
+          >
+            Redo
+          </button>
           <button
             type="button"
             className="secondary-button"

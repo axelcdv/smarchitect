@@ -95,6 +95,16 @@ describe("minimal Project Workspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Delete wall" }));
     expect(screen.getByText("0 walls")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(screen.getByText("1 wall")).toBeInTheDocument();
+    expect(
+      (screen.getByLabelText("Project Document YAML") as HTMLTextAreaElement)
+        .value
+    ).toContain("heightMm: 2800");
+
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    expect(screen.getByText("0 walls")).toBeInTheDocument();
   });
 
   it("imports a Project Document and exports it as YAML", async () => {

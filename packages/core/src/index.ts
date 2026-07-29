@@ -4,6 +4,10 @@ export {
   createProjectDocument
 } from "./project-workspace.js";
 export {
+  ProjectHistory,
+  type ProjectHistorySnapshot
+} from "./project-history.js";
+export {
   parseProjectDocument,
   validateProjectDocument
 } from "./validation.js";
