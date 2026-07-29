@@ -53,6 +53,7 @@
         "name",
         "baseElevationMm",
         "defaultWallHeightMm",
+        "walls",
         "extensions"
       ],
       "properties": {
@@ -72,9 +73,48 @@
           "type": "integer",
           "exclusiveMinimum": 0
         },
+        "walls": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/wall"
+          }
+        },
         "extensions": {
           "$ref": "#/$defs/extensions"
         }
+      }
+    },
+    "point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y"],
+      "properties": {
+        "x": { "type": "integer" },
+        "y": { "type": "integer" }
+      }
+    },
+    "wall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "thicknessMm", "heightMm", "extensions"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^wall_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "path": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "start", "end"],
+          "properties": {
+            "kind": { "const": "straight" },
+            "start": { "$ref": "#/$defs/point" },
+            "end": { "$ref": "#/$defs/point" }
+          }
+        },
+        "thicknessMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "heightMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "extensions": { "$ref": "#/$defs/extensions" }
       }
     },
     "extensions": {

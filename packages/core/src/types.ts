@@ -10,7 +10,48 @@ export interface Level {
   name: string;
   baseElevationMm: number;
   defaultWallHeightMm: number;
+  walls: Wall[];
   extensions: ExtensionData;
+}
+
+export interface PointMm {
+  x: number;
+  y: number;
+}
+
+export interface StraightWallPath {
+  kind: "straight";
+  start: PointMm;
+  end: PointMm;
+}
+
+export interface Wall {
+  id: string;
+  path: StraightWallPath;
+  thicknessMm: number;
+  heightMm: number;
+  extensions: ExtensionData;
+}
+
+export interface WallInput {
+  start: PointMm;
+  end: PointMm;
+  thicknessMm?: number;
+  heightMm?: number;
+}
+
+export interface WallUpdate {
+  start?: PointMm;
+  end?: PointMm;
+  lengthMm?: number;
+  angleDeg?: number;
+  thicknessMm?: number;
+  heightMm?: number;
+}
+
+export interface WallJunction {
+  point: PointMm;
+  wallIds: string[];
 }
 
 export interface ProjectDocument {
@@ -37,7 +78,7 @@ export interface ParseProjectDocumentResult {
   diagnostics: Diagnostic[];
 }
 
-export type EntityKind = "project" | "level";
+export type EntityKind = "project" | "level" | "wall";
 export type IdFactory = (kind: EntityKind) => string;
 
 export interface CreateProjectDocumentOptions {

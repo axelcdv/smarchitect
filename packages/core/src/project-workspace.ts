@@ -6,7 +6,10 @@ import {
   type EntityKind,
   type IdFactory,
   type Level,
-  type ProjectDocument
+  type PointMm,
+  type ProjectDocument,
+  type WallInput,
+  type WallUpdate
 } from "./types.js";
 import {
   parseProjectDocument,
@@ -45,6 +48,7 @@ export function createProjectDocument(
     name: DEFAULT_LEVEL_NAME,
     baseElevationMm: 0,
     defaultWallHeightMm: DEFAULT_WALL_HEIGHT_MM,
+    walls: [],
     extensions: {}
   };
   const document: ProjectDocument = {
@@ -77,16 +81,21 @@ export class ProjectValidationError extends Error {
 
 export class ProjectWorkspace {
   #document: ProjectDocument;
+  #idFactory: IdFactory;
 
-  private constructor(document: ProjectDocument) {
+  private constructor(document: ProjectDocument, idFactory: IdFactory = defaultIdFactory) {
     this.#document = cloneProjectDocument(document);
+    this.#idFactory = idFactory;
   }
 
   static create(
     name: string,
     options: CreateProjectDocumentOptions = {}
   ): ProjectWorkspace {
-    return new ProjectWorkspace(createProjectDocument(name, options));
+    return new ProjectWorkspace(
+      createProjectDocument(name, options),
+      options.idFactory ?? defaultIdFactory
+    );
   }
 
   static importYaml(source: string): ProjectWorkspace {
@@ -128,7 +137,86 @@ export class ProjectWorkspace {
       throw new ProjectValidationError(diagnostics);
     }
 
-    return new ProjectWorkspace(candidate);
+    return new ProjectWorkspace(candidate, this.#idFactory);
+  }
+
+  #replaceActiveLevel(update: (level: Level) => void): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
+
+    if (!level) {
+      throw new Error("The active Level is missing from the Project Document.");
+    }
+
+    update(level);
+    const diagnostics = validateProjectDocument(candidate);
+    if (diagnostics.length) {
+      throw new ProjectValidationError(diagnostics);
+    }
+    return new ProjectWorkspace(candidate, this.#idFactory);
+  }
+
+  addWall(input: WallInput): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      level.walls.push({
+        id: this.#idFactory("wall"),
+        path: { kind: "straight", start: input.start, end: input.end },
+        thicknessMm: input.thicknessMm ?? 150,
+        heightMm: input.heightMm ?? level.defaultWallHeightMm,
+        extensions: {}
+      });
+    });
+  }
+
+  updateWall(id: string, update: WallUpdate): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const wall = level.walls.find((candidate) => candidate.id === id);
+      if (!wall) throw new Error(`Wall "${id}" does not exist.`);
+      const start = update.start ?? wall.path.start;
+      const currentEnd = update.end ?? wall.path.end;
+      const length = update.lengthMm ?? Math.hypot(
+        currentEnd.x - start.x,
+        currentEnd.y - start.y
+      );
+      const angle = update.angleDeg === undefined
+        ? Math.atan2(currentEnd.y - start.y, currentEnd.x - start.x)
+        : update.angleDeg * Math.PI / 180;
+      wall.path = {
+        kind: "straight",
+        start: { ...start },
+        end: update.end && update.lengthMm === undefined && update.angleDeg === undefined
+          ? { ...update.end }
+          : {
+              x: Math.round(start.x + Math.cos(angle) * length),
+              y: Math.round(start.y + Math.sin(angle) * length)
+            }
+      };
+      wall.thicknessMm = update.thicknessMm ?? wall.thicknessMm;
+      wall.heightMm = update.heightMm ?? wall.heightMm;
+    });
+  }
+
+  moveWall(id: string, delta: PointMm): ProjectWorkspace {
+    const wall = this.activeLevel.walls.find((candidate) => candidate.id === id);
+    if (!wall) throw new Error(`Wall "${id}" does not exist.`);
+    return this.updateWall(id, {
+      start: {
+        x: wall.path.start.x + delta.x,
+        y: wall.path.start.y + delta.y
+      },
+      end: {
+        x: wall.path.end.x + delta.x,
+        y: wall.path.end.y + delta.y
+      }
+    });
+  }
+
+  deleteWall(id: string): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const count = level.walls.length;
+      level.walls = level.walls.filter((wall) => wall.id !== id);
+      if (level.walls.length === count) throw new Error(`Wall "${id}" does not exist.`);
+    });
   }
 
   exportYaml(): string {

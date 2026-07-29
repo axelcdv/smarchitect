@@ -10,7 +10,9 @@ import {
 function deterministicIdFactory(): () => string {
   const ids = [
     "project_00000000-0000-4000-8000-000000000001",
-    "level_00000000-0000-4000-8000-000000000002"
+    "level_00000000-0000-4000-8000-000000000002",
+    "wall_00000000-0000-4000-8000-000000000003",
+    "wall_00000000-0000-4000-8000-000000000004"
   ];
 
   return () => {
@@ -42,12 +44,47 @@ describe("Project Workspace acceptance seam", () => {
           name: "Ground floor",
           baseElevationMm: 0,
           defaultWallHeightMm: 2500,
+          walls: [],
           extensions: {}
         }
       ],
       extensions: {}
     });
     expect(validateProjectDocument(document)).toEqual([]);
+  });
+
+  it("adds, edits, moves, and deletes straight Walls without measurement drift", () => {
+    const workspace = ProjectWorkspace.create("Measured home", {
+      idFactory: deterministicIdFactory()
+    });
+    const withWall = workspace.addWall({
+      start: { x: 100, y: 200 },
+      end: { x: 3100, y: 200 }
+    });
+    const wallId = withWall.activeLevel.walls[0]!.id;
+    const edited = withWall.updateWall(wallId, {
+      lengthMm: 2500,
+      angleDeg: 90,
+      thicknessMm: 180,
+      heightMm: 2800
+    });
+    const moved = edited.moveWall(wallId, { x: 400, y: -100 });
+    const repeated = moved.updateWall(wallId, {
+      lengthMm: 2500,
+      angleDeg: 90
+    });
+
+    expect(repeated.activeLevel.walls[0]).toMatchObject({
+      path: {
+        kind: "straight",
+        start: { x: 500, y: 100 },
+        end: { x: 500, y: 2600 }
+      },
+      thicknessMm: 180,
+      heightMm: 2800
+    });
+    expect(repeated.exportYaml()).toContain("kind: straight");
+    expect(repeated.deleteWall(wallId).activeLevel.walls).toEqual([]);
   });
 
   it("renames, exports, and imports through one workspace boundary", () => {
