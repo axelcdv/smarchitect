@@ -13,12 +13,18 @@ import {
   type Wall
 } from "@smarchitect/core";
 import {
+  useEffect,
   useRef,
   useState,
   type ChangeEvent,
   type PointerEvent,
   type WheelEvent
 } from "react";
+import {
+  AutosavedProject,
+  IndexedDbProjectRepository,
+  SerializedProjectRepository
+} from "./project-persistence.js";
 import "./styles.css";
 
 type WallEditField =
@@ -49,6 +55,11 @@ function downloadYaml(source: string, projectName: string): void {
 export function App() {
   const [draftName, setDraftName] = useState("");
   const [workspace, setWorkspace] = useState<ProjectWorkspace>();
+  const [historyControls, setHistoryControls] = useState({
+    canUndo: false,
+    canRedo: false
+  });
+  const [isSaving, setIsSaving] = useState(false);
   const [yaml, setYaml] = useState("");
   const [error, setError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
@@ -60,16 +71,100 @@ export function App() {
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
   >();
   const importInput = useRef<HTMLInputElement>(null);
+  const repository = useRef(
+    new SerializedProjectRepository(new IndexedDbProjectRepository())
+  );
+  const autosavedProject = useRef<AutosavedProject | undefined>(undefined);
+  const transitionPending = useRef(false);
   const document = workspace?.document;
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
 
-  function commit(next: ProjectWorkspace): void {
+  function refreshHistoryControls(project: AutosavedProject): void {
+    setHistoryControls({
+      canUndo: project.canUndo,
+      canRedo: project.canRedo
+    });
+  }
+
+  useEffect(() => {
+    let active = true;
+    void AutosavedProject.restore(repository.current)
+      .then((restored) => {
+        if (!active || !restored || autosavedProject.current) return;
+        autosavedProject.current = restored;
+        setWorkspace(restored.workspace);
+        setYaml(restored.workspace.exportYaml());
+        setDraftName(restored.workspace.document.name);
+        refreshHistoryControls(restored);
+      })
+      .catch(() => {
+        if (active && !autosavedProject.current) {
+          setError("Local recovery is unavailable. New edits may not survive reload.");
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  function show(next: ProjectWorkspace): void {
     setWorkspace(next);
     setYaml(next.exportYaml());
     setError("");
+  }
+
+  async function persist(
+    transition: () => Promise<ProjectWorkspace>
+  ): Promise<ProjectWorkspace | undefined> {
+    if (transitionPending.current) return undefined;
+    transitionPending.current = true;
+    setIsSaving(true);
+    try {
+      const durable = await transition();
+      show(durable);
+      return durable;
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? `Autosave failed: ${cause.message}`
+        : "Autosave failed. The edit was not accepted.");
+      return undefined;
+    } finally {
+      transitionPending.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function commit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined> {
+    const project = autosavedProject.current;
+    if (!project) return undefined;
+    const durable = await persist(() => project.accept(next));
+    if (durable) refreshHistoryControls(project);
+    return durable;
+  }
+
+  async function startAutosave(next: ProjectWorkspace): Promise<boolean> {
+    const durable = await persist(async () => {
+      const project = await AutosavedProject.create(next, repository.current);
+      autosavedProject.current = project;
+      refreshHistoryControls(project);
+      return project.workspace;
+    });
+    return durable !== undefined;
+  }
+
+  async function navigateHistory(direction: "undo" | "redo"): Promise<void> {
+    const project = autosavedProject.current;
+    if (!project) return;
+    const restored = await persist(
+      () => direction === "undo" ? project.undo() : project.redo()
+    );
+    if (restored) {
+      setSelectedWallId(undefined);
+      refreshHistoryControls(project);
+    }
   }
 
   function clientPoint(svg: SVGSVGElement, clientX: number, clientY: number): PointMm {
@@ -85,6 +180,7 @@ export function App() {
   }
 
   function beginPlanGesture(event: PointerEvent<SVGSVGElement>): void {
+    if (transitionPending.current) return;
     const point = eventPoint(event);
     const snapTolerance = view.width / 80;
     if (mode === "draw") {
@@ -111,8 +207,8 @@ export function App() {
     }
   }
 
-  function finishPlanGesture(event: PointerEvent<SVGSVGElement>): void {
-    if (!workspace || !gesture) return;
+  async function finishPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
+    if (!workspace || !gesture || transitionPending.current) return;
     const point = eventPoint(event);
     if (gesture.kind === "draw") {
       const exactSnap = snapPoint(point, walls, view.width / 80);
@@ -121,9 +217,11 @@ export function App() {
         : snapAngle(gesture.start, point);
       if (snapped.x !== gesture.start.x || snapped.y !== gesture.start.y) {
         const next = workspace.addWall({ start: gesture.start, end: snapped });
-        commit(next);
-        setSelectedWallId(next.activeLevel.walls.at(-1)?.id);
-        setMode("select");
+        const durable = await commit(next);
+        if (durable) {
+          setSelectedWallId(durable.activeLevel.walls.at(-1)?.id);
+          setMode("select");
+        }
       }
     } else if (gesture.kind === "move") {
       const wall = walls.find(({ id }) => id === gesture.wallId);
@@ -132,7 +230,7 @@ export function App() {
           x: point.x - gesture.start.x,
           y: point.y - gesture.start.y
         }, walls.filter(({ id }) => id !== wall.id), view.width / 80);
-        commit(workspace.moveWall(gesture.wallId, delta));
+        await commit(workspace.moveWall(gesture.wallId, delta));
       }
     } else {
       const wall = walls.find(({ id }) => id === gesture.wallId);
@@ -141,7 +239,7 @@ export function App() {
         const candidates = walls.filter(({ id }) => id !== wall.id);
         const snapped = snapPoint(point, candidates, view.width / 80);
         const hasExactSnap = snapped.x !== point.x || snapped.y !== point.y;
-        commit(workspace.updateWall(wall.id, {
+        await commit(workspace.updateWall(wall.id, {
           [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
         }));
       }
@@ -149,7 +247,7 @@ export function App() {
     setGesture(undefined);
   }
 
-  function editSelected(field: WallEditField, value: string): void {
+  async function editSelected(field: WallEditField, value: string): Promise<void> {
     if (!workspace || !selectedWall || !value) return;
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return;
@@ -158,30 +256,26 @@ export function App() {
       : field === "endX" ? { end: { ...selectedWall.path.end, x: Math.round(numeric) } }
       : field === "endY" ? { end: { ...selectedWall.path.end, y: Math.round(numeric) } }
       : { [field]: field === "angleDeg" ? numeric : Math.round(numeric) };
-    commit(workspace.updateWall(selectedWall.id, update));
+    await commit(workspace.updateWall(selectedWall.id, update));
   }
 
-  function createProject(): void {
+  async function createProject(): Promise<void> {
     try {
       const created = ProjectWorkspace.create(draftName);
-      setWorkspace(created);
-      setYaml(created.exportYaml());
-      setError("");
+      await startAutosave(created);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to create project.");
     }
   }
 
-  function renameProject(event: ChangeEvent<HTMLInputElement>): void {
+  async function renameProject(event: ChangeEvent<HTMLInputElement>): Promise<void> {
     if (!workspace) {
       return;
     }
 
     try {
       const renamedWorkspace = workspace.rename(event.target.value);
-      setWorkspace(renamedWorkspace);
-      setYaml(renamedWorkspace.exportYaml());
-      setError("");
+      await commit(renamedWorkspace);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Unable to rename project.");
     }
@@ -196,10 +290,9 @@ export function App() {
 
     try {
       const imported = ProjectWorkspace.importYaml(await file.text());
-      setWorkspace(imported);
-      setYaml(imported.exportYaml());
-      setDraftName(imported.document.name);
-      setError("");
+      if (await startAutosave(imported)) {
+        setDraftName(imported.document.name);
+      }
     } catch (cause) {
       if (cause instanceof ProjectValidationError) {
         setError(cause.diagnostics.map(({ message }) => message).join(" "));
@@ -226,6 +319,7 @@ export function App() {
             <input
               autoFocus
               value={draftName}
+              disabled={isSaving}
               onChange={(event) => setDraftName(event.target.value)}
               placeholder="Our apartment"
             />
@@ -234,7 +328,7 @@ export function App() {
             <button
               className="primary-button"
               type="button"
-              disabled={!draftName.trim()}
+              disabled={isSaving || !draftName.trim()}
               onClick={createProject}
             >
               Create project
@@ -242,6 +336,7 @@ export function App() {
             <button
               className="secondary-button"
               type="button"
+              disabled={isSaving}
               onClick={() => importInput.current?.click()}
             >
               Import YAML
@@ -276,6 +371,22 @@ export function App() {
           <button
             type="button"
             className="secondary-button"
+            disabled={isSaving || !historyControls.canUndo}
+            onClick={() => void navigateHistory("undo")}
+          >
+            Undo
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={isSaving || !historyControls.canRedo}
+            onClick={() => void navigateHistory("redo")}
+          >
+            Redo
+          </button>
+          <button
+            type="button"
+            className="secondary-button"
             onClick={() => importInput.current?.click()}
           >
             Import YAML
@@ -302,7 +413,7 @@ export function App() {
         <aside className="project-panel" aria-label="Project properties">
           <label className="field">
             <span>Rename project</span>
-            <input value={document.name} onChange={renameProject} />
+            <input disabled={isSaving} value={document.name} onChange={renameProject} />
           </label>
           <div className="level-card">
             <span className="level-index">01</span>
@@ -345,8 +456,8 @@ export function App() {
             <span className="scale-chip">Metric · millimetres</span>
           </div>
           <div className="plan-toolbar">
-            <button className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
-            <button className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
+            <button disabled={isSaving} className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
+            <button disabled={isSaving} className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
             <span>{walls.length} {walls.length === 1 ? "wall" : "walls"}</span>
             <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
             <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
@@ -419,11 +530,12 @@ export function App() {
                 ["thicknessMm", "Wall thickness (mm)", selectedWall.thicknessMm],
                 ["heightMm", "Wall height (mm)", selectedWall.heightMm]
               ] satisfies [WallEditField, string, number][]).map(([field, label, value]) => (
-                <label key={field}><span>{label}</span><input aria-label={label} type="number" step={field === "angleDeg" ? "any" : 1} value={value} onChange={(event) => editSelected(field, event.target.value)} /></label>
+                <label key={field}><span>{label}</span><input disabled={isSaving} aria-label={label} type="number" step={field === "angleDeg" ? "any" : 1} value={value} onChange={(event) => void editSelected(field, event.target.value)} /></label>
               ))}
-              <button type="button" className="danger-button" onClick={() => {
-                commit(workspace.deleteWall(selectedWall.id));
-                setSelectedWallId(undefined);
+              <button type="button" className="danger-button" disabled={isSaving} onClick={async () => {
+                if (await commit(workspace.deleteWall(selectedWall.id))) {
+                  setSelectedWallId(undefined);
+                }
               }}>Delete wall</button>
             </div>
           ) : null}
