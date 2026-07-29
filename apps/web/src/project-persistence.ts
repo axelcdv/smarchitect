@@ -42,6 +42,16 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
+function transactionCompletion(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.addEventListener("complete", () => resolve());
+    transaction.addEventListener("error", () => reject(transaction.error));
+    transaction.addEventListener("abort", () => reject(
+      transaction.error ?? new Error("IndexedDB transaction was aborted.")
+    ));
+  });
+}
+
 async function openDatabase(): Promise<IDBDatabase> {
   const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
   request.addEventListener("upgradeneeded", () => {
@@ -69,9 +79,8 @@ export class IndexedDbProjectRepository implements ProjectRepository {
     const database = await openDatabase();
     try {
       const transaction = database.transaction(PROJECT_STORE, "readwrite");
-      await requestResult(
-        transaction.objectStore(PROJECT_STORE).put(snapshot, ACTIVE_PROJECT_KEY)
-      );
+      transaction.objectStore(PROJECT_STORE).put(snapshot, ACTIVE_PROJECT_KEY);
+      await transactionCompletion(transaction);
     } finally {
       database.close();
     }
@@ -80,8 +89,7 @@ export class IndexedDbProjectRepository implements ProjectRepository {
 
 export class AutosavedProject {
   readonly #repository: ProjectRepository;
-  readonly #history: ProjectHistory;
-  #pendingSave: Promise<void> = Promise.resolve();
+  #history: ProjectHistory;
 
   private constructor(history: ProjectHistory, repository: ProjectRepository) {
     this.#history = history;
@@ -97,12 +105,12 @@ export class AutosavedProject {
       : undefined;
   }
 
-  static create(
+  static async create(
     workspace: ProjectWorkspace,
     repository: ProjectRepository
-  ): AutosavedProject {
+  ): Promise<AutosavedProject> {
     const project = new AutosavedProject(ProjectHistory.create(workspace), repository);
-    project.#autosave();
+    await repository.save(project.#history.snapshot());
     return project;
   }
 
@@ -118,33 +126,29 @@ export class AutosavedProject {
     return this.#history.canRedo;
   }
 
-  accept(workspace: ProjectWorkspace): void {
-    this.#history.accept(workspace);
-    this.#autosave();
+  async accept(workspace: ProjectWorkspace): Promise<ProjectWorkspace> {
+    return this.#persistTransition((history) => history.accept(workspace));
   }
 
-  undo(): ProjectWorkspace {
-    const workspace = this.#history.undo();
-    this.#autosave();
-    return workspace;
+  async undo(): Promise<ProjectWorkspace> {
+    return this.#persistTransition((history) => {
+      history.undo();
+    });
   }
 
-  redo(): ProjectWorkspace {
-    const workspace = this.#history.redo();
-    this.#autosave();
-    return workspace;
+  async redo(): Promise<ProjectWorkspace> {
+    return this.#persistTransition((history) => {
+      history.redo();
+    });
   }
 
-  flush(): Promise<void> {
-    return this.#pendingSave;
-  }
-
-  #autosave(): void {
-    const snapshot = this.#history.snapshot();
-    this.#pendingSave = this.#pendingSave.then(
-      () => this.#repository.save(snapshot),
-      () => this.#repository.save(snapshot)
-    );
-    void this.#pendingSave.catch(() => undefined);
+  async #persistTransition(
+    transition: (history: ProjectHistory) => void
+  ): Promise<ProjectWorkspace> {
+    const candidate = ProjectHistory.restore(this.#history.snapshot());
+    transition(candidate);
+    await this.#repository.save(candidate.snapshot());
+    this.#history = candidate;
+    return this.workspace;
   }
 }
