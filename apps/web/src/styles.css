@@ -329,18 +329,12 @@ h2 {
 
 .wall-surface {
   fill: #46524b;
+  pointer-events: none;
 }
 
 .selected-wall {
   fill: var(--accent);
   pointer-events: none;
-}
-
-.wall-hit {
-  cursor: move;
-  fill: transparent;
-  stroke: transparent;
-  stroke-width: 40;
 }
 
 .junction {
@@ -353,6 +347,7 @@ h2 {
 .endpoint-handle {
   cursor: crosshair;
   fill: #fffef9;
+  pointer-events: none;
   stroke: var(--accent);
   stroke-width: 18;
 }

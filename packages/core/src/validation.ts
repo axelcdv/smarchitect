@@ -79,6 +79,20 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
       });
     }
     levelIds.add(level.id);
+
+    for (const [wallIndex, wall] of level.walls.entries()) {
+      if (
+        wall.path.start.x === wall.path.end.x
+        && wall.path.start.y === wall.path.end.y
+      ) {
+        diagnostics.push({
+          code: "wall.length.zero",
+          severity: "error",
+          path: `/levels/${index}/walls/${wallIndex}/path/end`,
+          message: "Wall path must have distinct start and end points."
+        });
+      }
+    }
   }
 
   if (!levelIds.has(document.activeLevelId)) {

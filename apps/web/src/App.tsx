@@ -1,10 +1,14 @@
 import {
   deriveWallFaces,
   deriveWallJunctions,
+  findWallAtPoint,
+  findWallEndpointAtPoint,
   ProjectValidationError,
   ProjectWorkspace,
   snapAngle,
   snapPoint,
+  snapWallDelta,
+  wallAngleDeg,
   type PointMm,
   type Wall
 } from "@smarchitect/core";
@@ -81,21 +85,40 @@ export function App() {
   }
 
   function beginPlanGesture(event: PointerEvent<SVGSVGElement>): void {
-    if (event.target !== event.currentTarget && mode === "select") return;
     const point = eventPoint(event);
-    if (mode === "draw") setGesture({ kind: "draw", start: point });
-    else setSelectedWallId(undefined);
+    const snapTolerance = view.width / 80;
+    if (mode === "draw") {
+      setGesture({ kind: "draw", start: snapPoint(point, walls, snapTolerance) });
+      return;
+    }
+
+    const endpointHit = selectedWall
+      ? findWallEndpointAtPoint(point, [selectedWall], view.width / 160)
+      : undefined;
+    if (endpointHit) {
+      setGesture({
+        kind: "endpoint",
+        wallId: endpointHit.wallId,
+        endpoint: endpointHit.endpoint
+      });
+      return;
+    }
+
+    const wall = findWallAtPoint(point, walls, view.width / 400);
+    setSelectedWallId(wall?.id);
+    if (wall) {
+      setGesture({ kind: "move", wallId: wall.id, start: point });
+    }
   }
 
   function finishPlanGesture(event: PointerEvent<SVGSVGElement>): void {
     if (!workspace || !gesture) return;
     const point = eventPoint(event);
     if (gesture.kind === "draw") {
-      const snapped = snapPoint(
-        snapAngle(gesture.start, point),
-        walls,
-        view.width / 80
-      );
+      const exactSnap = snapPoint(point, walls, view.width / 80);
+      const snapped = exactSnap.x !== point.x || exactSnap.y !== point.y
+        ? exactSnap
+        : snapAngle(gesture.start, point);
       if (snapped.x !== gesture.start.x || snapped.y !== gesture.start.y) {
         const next = workspace.addWall({ start: gesture.start, end: snapped });
         commit(next);
@@ -103,10 +126,14 @@ export function App() {
         setMode("select");
       }
     } else if (gesture.kind === "move") {
-      commit(workspace.moveWall(gesture.wallId, {
-        x: point.x - gesture.start.x,
-        y: point.y - gesture.start.y
-      }));
+      const wall = walls.find(({ id }) => id === gesture.wallId);
+      if (wall) {
+        const delta = snapWallDelta(wall, {
+          x: point.x - gesture.start.x,
+          y: point.y - gesture.start.y
+        }, walls.filter(({ id }) => id !== wall.id), view.width / 80);
+        commit(workspace.moveWall(gesture.wallId, delta));
+      }
     } else {
       const wall = walls.find(({ id }) => id === gesture.wallId);
       if (wall) {
@@ -122,20 +149,6 @@ export function App() {
     setGesture(undefined);
   }
 
-  function selectWall(event: PointerEvent<SVGPolygonElement>, wall: Wall): void {
-    event.stopPropagation();
-    setSelectedWallId(wall.id);
-    setMode("select");
-    const svg = event.currentTarget.ownerSVGElement;
-    if (svg) {
-      setGesture({
-        kind: "move",
-        wallId: wall.id,
-        start: clientPoint(svg, event.clientX, event.clientY)
-      });
-    }
-  }
-
   function editSelected(field: WallEditField, value: string): void {
     if (!workspace || !selectedWall || !value) return;
     const numeric = Number(value);
@@ -144,7 +157,7 @@ export function App() {
       : field === "startY" ? { start: { ...selectedWall.path.start, y: Math.round(numeric) } }
       : field === "endX" ? { end: { ...selectedWall.path.end, x: Math.round(numeric) } }
       : field === "endY" ? { end: { ...selectedWall.path.end, y: Math.round(numeric) } }
-      : { [field]: Math.round(numeric) };
+      : { [field]: field === "angleDeg" ? numeric : Math.round(numeric) };
     commit(workspace.updateWall(selectedWall.id, update));
   }
 
@@ -375,14 +388,6 @@ export function App() {
                   : "";
               }).join(" ")}
             />
-            {walls.map((wall) => (
-              <polygon
-                key={wall.id}
-                className="wall-hit"
-                points={wallPolygonPoints(wall)}
-                onPointerDown={(event) => selectWall(event, wall)}
-              />
-            ))}
             {selectedWall ? (
               <polygon
                 className="selected-wall"
@@ -399,10 +404,6 @@ export function App() {
                 cx={selectedWall.path[endpoint].x}
                 cy={-selectedWall.path[endpoint].y}
                 r={view.width / 160}
-                onPointerDown={(event) => {
-                  event.stopPropagation();
-                  setGesture({ kind: "endpoint", wallId: selectedWall.id, endpoint });
-                }}
               />
             )) : null}
           </svg>
@@ -414,11 +415,11 @@ export function App() {
                 ["endX", "End X (mm)", selectedWall.path.end.x],
                 ["endY", "End Y (mm)", selectedWall.path.end.y],
                 ["lengthMm", "Wall length (mm)", Math.round(Math.hypot(selectedWall.path.end.x - selectedWall.path.start.x, selectedWall.path.end.y - selectedWall.path.start.y))],
-                ["angleDeg", "Wall angle (deg)", Math.round(Math.atan2(selectedWall.path.end.y - selectedWall.path.start.y, selectedWall.path.end.x - selectedWall.path.start.x) * 180 / Math.PI)],
+                ["angleDeg", "Wall angle (deg)", Number(wallAngleDeg(selectedWall).toFixed(2))],
                 ["thicknessMm", "Wall thickness (mm)", selectedWall.thicknessMm],
                 ["heightMm", "Wall height (mm)", selectedWall.heightMm]
               ] satisfies [WallEditField, string, number][]).map(([field, label, value]) => (
-                <label key={field}><span>{label}</span><input aria-label={label} type="number" value={value} onChange={(event) => editSelected(field, event.target.value)} /></label>
+                <label key={field}><span>{label}</span><input aria-label={label} type="number" step={field === "angleDeg" ? "any" : 1} value={value} onChange={(event) => editSelected(field, event.target.value)} /></label>
               ))}
               <button type="button" className="danger-button" onClick={() => {
                 commit(workspace.deleteWall(selectedWall.id));

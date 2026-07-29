@@ -10,8 +10,13 @@ export {
 export {
   deriveWallFaces,
   deriveWallJunctions,
+  findWallAtPoint,
+  findWallEndpointAtPoint,
+  normalizeAngleDeg,
   snapAngle,
-  snapPoint
+  snapPoint,
+  snapWallDelta,
+  wallAngleDeg
 } from "./wall-geometry.js";
 export {
   CURRENT_SCHEMA_VERSION,

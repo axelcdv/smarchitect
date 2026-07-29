@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   deriveWallFaces,
   deriveWallJunctions,
+  findWallAtPoint,
+  findWallEndpointAtPoint,
+  normalizeAngleDeg,
+  snapWallDelta,
   snapPoint,
   type Wall
 } from "./index.js";
@@ -74,5 +78,31 @@ describe("wall geometry", () => {
       x: 1500,
       y: 0
     });
+  });
+
+  it("hit-tests Wall faces and endpoint handles in the shared core", () => {
+    const walls = [wall("wall_a", [0, 0], [3000, 0], 200)];
+
+    expect(findWallAtPoint({ x: 1500, y: 90 }, walls)?.id).toBe("wall_a");
+    expect(findWallAtPoint({ x: 1500, y: 101 }, walls)).toBeUndefined();
+    expect(findWallEndpointAtPoint({ x: 8, y: -6 }, walls, 10)).toEqual({
+      wallId: "wall_a",
+      endpoint: "start"
+    });
+  });
+
+  it("snaps whole-Wall movement to exact endpoint contacts", () => {
+    const moving = wall("wall_moving", [0, 0], [1000, 0]);
+    const fixed = wall("wall_fixed", [2010, 0], [3000, 0]);
+
+    expect(snapWallDelta(moving, { x: 1005, y: 4 }, [fixed], 10)).toEqual({
+      x: 1010,
+      y: 0
+    });
+  });
+
+  it("normalizes arbitrary angles to the canonical range", () => {
+    expect(normalizeAngleDeg(-306.87)).toBeCloseTo(53.13);
+    expect(normalizeAngleDeg(413.13)).toBeCloseTo(53.13);
   });
 });

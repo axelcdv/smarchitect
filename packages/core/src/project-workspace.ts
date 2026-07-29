@@ -15,6 +15,7 @@ import {
   parseProjectDocument,
   validateProjectDocument
 } from "./validation.js";
+import { normalizeAngleDeg } from "./wall-geometry.js";
 
 const DEFAULT_LEVEL_NAME = "Ground floor";
 const DEFAULT_WALL_HEIGHT_MM = 2500;
@@ -180,7 +181,7 @@ export class ProjectWorkspace {
       );
       const angle = update.angleDeg === undefined
         ? Math.atan2(currentEnd.y - start.y, currentEnd.x - start.x)
-        : update.angleDeg * Math.PI / 180;
+        : normalizeAngleDeg(update.angleDeg) * Math.PI / 180;
       wall.path = {
         kind: "straight",
         start: { ...start },

@@ -6,6 +6,21 @@ function distance(a: PointMm, b: PointMm): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function wallDistance(point: PointMm, wall: Wall): number {
+  const direction = subtract(wall.path.end, wall.path.start);
+  const lengthSquared = direction.x ** 2 + direction.y ** 2;
+  if (!lengthSquared) return distance(point, wall.path.start);
+  const fromStart = subtract(point, wall.path.start);
+  const parameter = Math.max(
+    0,
+    Math.min(1, (fromStart.x * direction.x + fromStart.y * direction.y) / lengthSquared)
+  );
+  return distance(point, {
+    x: wall.path.start.x + direction.x * parameter,
+    y: wall.path.start.y + direction.y * parameter
+  });
+}
+
 function cross(a: PointMm, b: PointMm): number {
   return a.x * b.y - a.y * b.x;
 }
@@ -122,6 +137,73 @@ export function snapPoint(
     .sort((a, b) => a.distance - b.distance)[0];
 
   return nearest ? { ...nearest.candidate } : { ...point };
+}
+
+export function findWallAtPoint(
+  point: PointMm,
+  walls: Wall[],
+  toleranceMm = 0
+): Wall | undefined {
+  return walls
+    .map((wall) => ({ wall, distance: wallDistance(point, wall) }))
+    .filter(({ wall, distance: pointDistance }) =>
+      pointDistance <= wall.thicknessMm / 2 + toleranceMm
+    )
+    .sort((left, right) => left.distance - right.distance)[0]?.wall;
+}
+
+export function findWallEndpointAtPoint(
+  point: PointMm,
+  walls: Wall[],
+  toleranceMm: number
+): { wallId: string; endpoint: "start" | "end" } | undefined {
+  const nearest = walls
+    .flatMap((wall) => (["start", "end"] as const).map((endpoint) => ({
+      wallId: wall.id,
+      endpoint,
+      distance: distance(point, wall.path[endpoint])
+    })))
+    .filter(({ distance: endpointDistance }) => endpointDistance <= toleranceMm)
+    .sort((left, right) => left.distance - right.distance)[0];
+  return nearest
+    ? { wallId: nearest.wallId, endpoint: nearest.endpoint }
+    : undefined;
+}
+
+export function snapWallDelta(
+  wall: Wall,
+  delta: PointMm,
+  otherWalls: Wall[],
+  toleranceMm: number
+): PointMm {
+  const corrections = (["start", "end"] as const).flatMap((endpoint) => {
+    const translated = {
+      x: wall.path[endpoint].x + delta.x,
+      y: wall.path[endpoint].y + delta.y
+    };
+    const snapped = snapPoint(translated, otherWalls, toleranceMm);
+    const correction = subtract(snapped, translated);
+    return correction.x || correction.y
+      ? [{ correction, distance: distance(translated, snapped) }]
+      : [];
+  });
+  const nearest = corrections.sort((left, right) => left.distance - right.distance)[0];
+  return nearest
+    ? { x: delta.x + nearest.correction.x, y: delta.y + nearest.correction.y }
+    : { ...delta };
+}
+
+export function normalizeAngleDeg(angleDeg: number): number {
+  return ((angleDeg % 360) + 360) % 360;
+}
+
+export function wallAngleDeg(wall: Wall): number {
+  return normalizeAngleDeg(
+    Math.atan2(
+      wall.path.end.y - wall.path.start.y,
+      wall.path.end.x - wall.path.start.x
+    ) * 180 / Math.PI
+  );
 }
 
 export function snapAngle(

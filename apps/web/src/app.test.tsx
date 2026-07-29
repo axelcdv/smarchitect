@@ -71,12 +71,27 @@ describe("minimal Project Workspace", () => {
     fireEvent.change(screen.getByLabelText("Wall thickness (mm)"), {
       target: { value: "220" }
     });
+    fireEvent.change(screen.getByLabelText("Wall angle (deg)"), {
+      target: { value: "53.13" }
+    });
+    fireEvent.change(screen.getByLabelText("Wall height (mm)"), {
+      target: { value: "2800" }
+    });
+    expect(screen.getByLabelText("Wall angle (deg)")).toHaveValue(53.13);
+    expect(screen.getByLabelText("Wall height (mm)")).toHaveValue(2800);
+
+    fireEvent.change(screen.getByLabelText("Start Y (mm)"), {
+      target: { value: "200" }
+    });
+    fireEvent.pointerDown(plan, { clientX: 226, clientY: 82 });
+    fireEvent.pointerUp(plan, { clientX: 276, clientY: 82 });
 
     const yaml = (screen.getByLabelText(
       "Project Document YAML"
     ) as HTMLTextAreaElement).value;
     expect(yaml).toContain("thicknessMm: 220");
-    expect(yaml).toContain("x: 1200");
+    expect(yaml).toContain("heightMm: 2800");
+    expect(yaml).toContain("x: -2500");
 
     fireEvent.click(screen.getByRole("button", { name: "Delete wall" }));
     expect(screen.getByText("0 walls")).toBeInTheDocument();
