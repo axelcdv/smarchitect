@@ -1,0 +1,21 @@
+{
+  "name": "smarchitect",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "build": "pnpm --filter @smarchitect/core build && pnpm --filter @smarchitect/cli build && pnpm --filter @smarchitect/web build",
+    "dev": "pnpm --filter @smarchitect/core build && pnpm --filter @smarchitect/web dev",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@types/node": "^26.1.2",
+    "jsdom": "^30.0.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
