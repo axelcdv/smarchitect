@@ -11,6 +11,7 @@ export interface Level {
   baseElevationMm: number;
   defaultWallHeightMm: number;
   walls: Wall[];
+  furniturePlacements?: FurniturePlacement[];
   extensions: ExtensionData;
 }
 
@@ -49,6 +50,47 @@ export interface WallUpdate {
   heightMm?: number;
 }
 
+export interface FurnitureDefinition {
+  id: string;
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+  extensions: ExtensionData;
+}
+
+export interface FurnitureDefinitionInput {
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+}
+
+export type FurnitureDefinitionUpdate = Partial<
+  Pick<FurnitureDefinition, "name" | "widthMm" | "depthMm" | "heightMm">
+>;
+
+export interface FurniturePlacement {
+  id: string;
+  definitionId: string;
+  position: PointMm;
+  rotationDeg: number;
+  elevationMm: number;
+  extensions: ExtensionData;
+}
+
+export interface FurniturePlacementInput {
+  position: PointMm;
+  rotationDeg?: number;
+  elevationMm?: number;
+}
+
+export interface FurniturePlacementUpdate {
+  position?: PointMm;
+  rotationDeg?: number;
+  elevationMm?: number;
+}
+
 export interface WallJunction {
   point: PointMm;
   wallIds: string[];
@@ -60,6 +102,7 @@ export interface ProjectDocument {
   name: string;
   units: MeasurementUnits;
   activeLevelId: string;
+  furnitureDefinitions?: FurnitureDefinition[];
   levels: Level[];
   extensions: ExtensionData;
 }
@@ -78,9 +121,18 @@ export interface ParseProjectDocumentResult {
   diagnostics: Diagnostic[];
 }
 
-export type EntityKind = "project" | "level" | "wall";
+export type EntityKind =
+  | "project"
+  | "level"
+  | "wall"
+  | "furniture_definition"
+  | "furniture_placement";
 export type IdFactory = (kind: EntityKind) => string;
 
 export interface CreateProjectDocumentOptions {
+  idFactory?: IdFactory;
+}
+
+export interface CreateFurnitureDefinitionOptions {
   idFactory?: IdFactory;
 }

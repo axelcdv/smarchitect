@@ -3,7 +3,10 @@ import {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
   type Diagnostic,
-  type EntityKind,
+  type FurnitureDefinition,
+  type FurnitureDefinitionUpdate,
+  type FurniturePlacementInput,
+  type FurniturePlacementUpdate,
   type IdFactory,
   type Level,
   type PointMm,
@@ -11,6 +14,7 @@ import {
   type WallInput,
   type WallUpdate
 } from "./types.js";
+import { defaultIdFactory } from "./id-factory.js";
 import {
   parseProjectDocument,
   validateProjectDocument
@@ -19,10 +23,6 @@ import { normalizeAngleDeg } from "./wall-geometry.js";
 
 const DEFAULT_LEVEL_NAME = "Ground floor";
 const DEFAULT_WALL_HEIGHT_MM = 2500;
-
-function defaultIdFactory(kind: EntityKind): string {
-  return `${kind}_${globalThis.crypto.randomUUID()}`;
-}
 
 function cloneProjectDocument(document: ProjectDocument): ProjectDocument {
   return structuredClone(document);
@@ -50,6 +50,7 @@ export function createProjectDocument(
     baseElevationMm: 0,
     defaultWallHeightMm: DEFAULT_WALL_HEIGHT_MM,
     walls: [],
+    furniturePlacements: [],
     extensions: {}
   };
   const document: ProjectDocument = {
@@ -58,6 +59,7 @@ export function createProjectDocument(
     name: assertNonEmptyName(name, "Project"),
     units: "metric",
     activeLevelId: level.id,
+    furnitureDefinitions: [],
     levels: [level],
     extensions: {}
   };
@@ -217,6 +219,119 @@ export class ProjectWorkspace {
       const count = level.walls.length;
       level.walls = level.walls.filter((wall) => wall.id !== id);
       if (level.walls.length === count) throw new Error(`Wall "${id}" does not exist.`);
+    });
+  }
+
+  placeFurniture(
+    definition: FurnitureDefinition,
+    input: FurniturePlacementInput
+  ): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
+    if (!level) throw new Error("The active Level is missing from the Project Document.");
+
+    const embedded = candidate.furnitureDefinitions?.find(
+      ({ id }) => id === definition.id
+    );
+    if (!embedded) {
+      candidate.furnitureDefinitions ??= [];
+      candidate.furnitureDefinitions.push(structuredClone(definition));
+    }
+    level.furniturePlacements ??= [];
+    level.furniturePlacements.push({
+      id: this.#idFactory("furniture_placement"),
+      definitionId: definition.id,
+      position: { ...input.position },
+      rotationDeg: normalizeAngleDeg(input.rotationDeg ?? 0),
+      elevationMm: input.elevationMm ?? 0,
+      extensions: {}
+    });
+    const diagnostics = validateProjectDocument(candidate);
+    if (diagnostics.length) throw new ProjectValidationError(diagnostics);
+    return new ProjectWorkspace(candidate, this.#idFactory);
+  }
+
+  updateFurniturePlacement(
+    id: string,
+    update: FurniturePlacementUpdate
+  ): ProjectWorkspace {
+    const unsupportedKeys = Object.keys(update).filter(
+      (key) => !["position", "rotationDeg", "elevationMm"].includes(key)
+    );
+    if (unsupportedKeys.length) {
+      throw new Error("Furniture Placement dimension overrides are not supported.");
+    }
+    return this.#replaceActiveLevel((level) => {
+      const placement = level.furniturePlacements?.find(
+        (candidate) => candidate.id === id
+      );
+      if (!placement) throw new Error(`Furniture Placement "${id}" does not exist.`);
+      if (update.position) placement.position = { ...update.position };
+      if (update.rotationDeg !== undefined) {
+        placement.rotationDeg = normalizeAngleDeg(update.rotationDeg);
+      }
+      if (update.elevationMm !== undefined) placement.elevationMm = update.elevationMm;
+    });
+  }
+
+  updateFurnitureDefinition(
+    id: string,
+    update: FurnitureDefinitionUpdate
+  ): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const definition = candidate.furnitureDefinitions?.find(
+      (item) => item.id === id
+    );
+    if (!definition) throw new Error(`Furniture Definition "${id}" does not exist.`);
+    if (update.name !== undefined) {
+      definition.name = assertNonEmptyName(update.name, "Furniture Definition");
+    }
+    if (update.widthMm !== undefined) definition.widthMm = update.widthMm;
+    if (update.depthMm !== undefined) definition.depthMm = update.depthMm;
+    if (update.heightMm !== undefined) definition.heightMm = update.heightMm;
+    const diagnostics = validateProjectDocument(candidate);
+    if (diagnostics.length) throw new ProjectValidationError(diagnostics);
+    return new ProjectWorkspace(candidate, this.#idFactory);
+  }
+
+  makeFurniturePlacementUnique(id: string): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const level = candidate.levels.find(({ id: levelId }) =>
+      levelId === candidate.activeLevelId
+    );
+    if (!level) throw new Error("The active Level is missing from the Project Document.");
+    const placement = level.furniturePlacements?.find(({ id: placementId }) =>
+      placementId === id
+    );
+    if (!placement) throw new Error(`Furniture Placement "${id}" does not exist.`);
+    const definition = candidate.furnitureDefinitions?.find(
+      ({ id: definitionId }) => definitionId === placement.definitionId
+    );
+    if (!definition) {
+      throw new Error(`Furniture Definition "${placement.definitionId}" does not exist.`);
+    }
+    const copy = {
+      ...structuredClone(definition),
+      id: this.#idFactory("furniture_definition"),
+      name: `${definition.name} copy`
+    };
+    candidate.furnitureDefinitions ??= [];
+    candidate.furnitureDefinitions.push(copy);
+    placement.definitionId = copy.id;
+    const diagnostics = validateProjectDocument(candidate);
+    if (diagnostics.length) throw new ProjectValidationError(diagnostics);
+    return new ProjectWorkspace(candidate, this.#idFactory);
+  }
+
+  deleteFurniturePlacement(id: string): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const count = level.furniturePlacements?.length ?? 0;
+      level.furniturePlacements = (level.furniturePlacements ?? []).filter(
+        (placement) => placement.id !== id
+      );
+      if (count === level.furniturePlacements.length) {
+        throw new Error(`Furniture Placement "${id}" does not exist.`);
+      }
     });
   }
 

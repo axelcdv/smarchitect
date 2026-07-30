@@ -3,6 +3,8 @@ import {
   deriveWallJunctions,
   findWallAtPoint,
   findWallEndpointAtPoint,
+  furnitureFootprintCorners,
+  furniturePlacementContainsPoint,
   ProjectValidationError,
   ProjectWorkspace,
   snapAngle,
@@ -10,6 +12,8 @@ import {
   snapWallDelta,
   wallAngleDeg,
   type PointMm,
+  type FurnitureDefinitionUpdate,
+  type FurniturePlacementUpdate,
   type Wall
 } from "@smarchitect/core";
 import {
@@ -25,6 +29,9 @@ import {
   IndexedDbProjectRepository,
   SerializedProjectRepository
 } from "./project-persistence.js";
+import { FurniturePlacementInspector } from "./FurniturePlacementInspector.js";
+import { ItemLibrary } from "./ItemLibrary.js";
+import { useFurnitureLibrary } from "./use-furniture-library.js";
 import "./styles.css";
 
 type WallEditField =
@@ -63,12 +70,16 @@ export function App() {
   const [yaml, setYaml] = useState("");
   const [error, setError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
-  const [mode, setMode] = useState<"draw" | "select">("draw");
+  const [selectedFurnitureId, setSelectedFurnitureId] = useState<string>();
+  const [placingDefinitionId, setPlacingDefinitionId] = useState<string>();
+  const library = useFurnitureLibrary(setError);
+  const [mode, setMode] = useState<"draw" | "select" | "placeFurniture">("draw");
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
     | { kind: "draw"; start: PointMm }
     | { kind: "move"; wallId: string; start: PointMm }
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
+    | { kind: "furnitureMove"; placementId: string; start: PointMm }
   >();
   const importInput = useRef<HTMLInputElement>(null);
   const repository = useRef(
@@ -81,6 +92,16 @@ export function App() {
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
+  const furniturePlacements = activeLevel?.furniturePlacements ?? [];
+  const selectedFurniture = furniturePlacements.find(
+    ({ id }) => id === selectedFurnitureId
+  );
+  const selectedFurnitureDefinition = document?.furnitureDefinitions?.find(
+    ({ id }) => id === selectedFurniture?.definitionId
+  );
+  const selectedLibraryDefinition = library.definitions.find(
+    ({ id }) => id === selectedFurnitureDefinition?.id
+  );
 
   function refreshHistoryControls(project: AutosavedProject): void {
     setHistoryControls({
@@ -163,6 +184,7 @@ export function App() {
     );
     if (restored) {
       setSelectedWallId(undefined);
+      setSelectedFurnitureId(undefined);
       refreshHistoryControls(project);
     }
   }
@@ -179,12 +201,49 @@ export function App() {
     return clientPoint(event.currentTarget, event.clientX, event.clientY);
   }
 
-  function beginPlanGesture(event: PointerEvent<SVGSVGElement>): void {
+  async function beginPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
     if (transitionPending.current) return;
     const point = eventPoint(event);
     const snapTolerance = view.width / 80;
+    if (mode === "placeFurniture") {
+      const definition = library.definitions.find(
+        ({ id }) => id === placingDefinitionId
+      );
+      if (!workspace || !definition) return;
+      const durable = await commit(workspace.placeFurniture(definition, {
+        position: point
+      }));
+      if (durable) {
+        setSelectedFurnitureId(
+          durable.activeLevel.furniturePlacements?.at(-1)?.id
+        );
+        setSelectedWallId(undefined);
+        setMode("select");
+        setPlacingDefinitionId(undefined);
+      }
+      return;
+    }
     if (mode === "draw") {
       setGesture({ kind: "draw", start: snapPoint(point, walls, snapTolerance) });
+      return;
+    }
+
+    const furniture = [...furniturePlacements].reverse().find((placement) => {
+      const definition = document?.furnitureDefinitions?.find(
+        ({ id }) => id === placement.definitionId
+      );
+      return definition
+        ? furniturePlacementContainsPoint(definition, placement, point)
+        : false;
+    });
+    if (furniture) {
+      setSelectedFurnitureId(furniture.id);
+      setSelectedWallId(undefined);
+      setGesture({
+        kind: "furnitureMove",
+        placementId: furniture.id,
+        start: point
+      });
       return;
     }
 
@@ -202,6 +261,7 @@ export function App() {
 
     const wall = findWallAtPoint(point, walls, view.width / 400);
     setSelectedWallId(wall?.id);
+    setSelectedFurnitureId(undefined);
     if (wall) {
       setGesture({ kind: "move", wallId: wall.id, start: point });
     }
@@ -232,7 +292,7 @@ export function App() {
         }, walls.filter(({ id }) => id !== wall.id), view.width / 80);
         await commit(workspace.moveWall(gesture.wallId, delta));
       }
-    } else {
+    } else if (gesture.kind === "endpoint") {
       const wall = walls.find(({ id }) => id === gesture.wallId);
       if (wall) {
         const other = gesture.endpoint === "start" ? wall.path.end : wall.path.start;
@@ -243,8 +303,37 @@ export function App() {
           [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
         }));
       }
+    } else {
+      const placement = furniturePlacements.find(
+        ({ id }) => id === gesture.placementId
+      );
+      if (placement) {
+        await commit(workspace.updateFurniturePlacement(placement.id, {
+          position: {
+            x: placement.position.x + point.x - gesture.start.x,
+            y: placement.position.y + point.y - gesture.start.y
+          }
+        }));
+      }
     }
     setGesture(undefined);
+  }
+
+  async function editFurniturePlacement(
+    update: FurniturePlacementUpdate
+  ): Promise<void> {
+    if (!workspace || !selectedFurniture) return;
+    await commit(workspace.updateFurniturePlacement(selectedFurniture.id, update));
+  }
+
+  async function editEmbeddedDefinition(
+    update: FurnitureDefinitionUpdate
+  ): Promise<void> {
+    if (!workspace || !selectedFurnitureDefinition) return;
+    await commit(workspace.updateFurnitureDefinition(
+      selectedFurnitureDefinition.id,
+      update
+    ));
   }
 
   async function editSelected(field: WallEditField, value: string): Promise<void> {
@@ -424,6 +513,14 @@ export function App() {
               </small>
             </div>
           </div>
+          <ItemLibrary
+            controller={library}
+            disabled={isSaving}
+            onPlace={(id) => {
+              setPlacingDefinitionId(id);
+              setMode("placeFurniture");
+            }}
+          />
           <dl className="project-facts">
             <div>
               <dt>Units</dt>
@@ -458,7 +555,12 @@ export function App() {
           <div className="plan-toolbar">
             <button disabled={isSaving} className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
             <button disabled={isSaving} className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
-            <span>{walls.length} {walls.length === 1 ? "wall" : "walls"}</span>
+            <span className="plan-count">
+              {`${walls.length} ${walls.length === 1 ? "wall" : "walls"}`}
+            </span>
+            <span>
+              {`${furniturePlacements.length} Furniture ${furniturePlacements.length === 1 ? "Placement" : "Placements"}`}
+            </span>
             <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
             <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
             <button type="button" aria-label="Pan left" onClick={() => setView((current) => ({ ...current, x: current.x - current.width / 10 }))}>←</button>
@@ -471,8 +573,8 @@ export function App() {
             viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
             role="application"
             aria-label={`${activeLevel.name} wall editor`}
-            onPointerDown={beginPlanGesture}
-            onPointerUp={finishPlanGesture}
+            onPointerDown={(event) => void beginPlanGesture(event)}
+            onPointerUp={(event) => void finishPlanGesture(event)}
             onWheel={(event: WheelEvent<SVGSVGElement>) => {
               event.preventDefault();
               const factor = event.deltaY > 0 ? 1.1 : .9;
@@ -499,6 +601,23 @@ export function App() {
                   : "";
               }).join(" ")}
             />
+            {furniturePlacements.map((placement) => {
+              const definition = document.furnitureDefinitions?.find(
+                ({ id }) => id === placement.definitionId
+              );
+              if (!definition) return null;
+              return (
+                <polygon
+                  key={placement.id}
+                  className={placement.id === selectedFurnitureId
+                    ? "furniture-footprint selected-furniture"
+                    : "furniture-footprint"}
+                  points={furnitureFootprintCorners(definition, placement)
+                    .map(({ x, y }) => `${x},${-y}`)
+                    .join(" ")}
+                />
+              );
+            })}
             {selectedWall ? (
               <polygon
                 className="selected-wall"
@@ -538,6 +657,26 @@ export function App() {
                 }
               }}>Delete wall</button>
             </div>
+          ) : null}
+          {selectedFurniture && selectedFurnitureDefinition ? (
+            <FurniturePlacementInspector
+              definition={selectedFurnitureDefinition}
+              disabled={isSaving}
+              libraryDefinition={selectedLibraryDefinition}
+              placement={selectedFurniture}
+              onUpdatePlacement={(update) => void editFurniturePlacement(update)}
+              onUpdateDefinition={(update) => void editEmbeddedDefinition(update)}
+              onMakeUnique={() => void commit(
+                workspace.makeFurniturePlacementUnique(selectedFurniture.id)
+              )}
+              onDelete={async () => {
+                if (await commit(
+                  workspace.deleteFurniturePlacement(selectedFurniture.id)
+                )) {
+                  setSelectedFurnitureId(undefined);
+                }
+              }}
+            />
           ) : null}
         </section>
 
