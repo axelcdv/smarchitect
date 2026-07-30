@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CURRENT_SCHEMA_VERSION,
+  ProjectValidationError,
   ProjectWorkspace,
   createProjectDocument,
   parseProjectDocument,
@@ -12,7 +13,10 @@ function deterministicIdFactory(): () => string {
     "project_00000000-0000-4000-8000-000000000001",
     "level_00000000-0000-4000-8000-000000000002",
     "wall_00000000-0000-4000-8000-000000000003",
-    "wall_00000000-0000-4000-8000-000000000004"
+    "wall_00000000-0000-4000-8000-000000000004",
+    "furniture_definition_00000000-0000-4000-8000-000000000005",
+    "furniture_placement_00000000-0000-4000-8000-000000000006",
+    "furniture_definition_00000000-0000-4000-8000-000000000007"
   ];
 
   return () => {
@@ -22,6 +26,21 @@ function deterministicIdFactory(): () => string {
       throw new Error("The test exhausted its deterministic IDs");
     }
 
+    return id;
+  };
+}
+
+function deterministicFurnitureIdFactory(): () => string {
+  const ids = [
+    "project_00000000-0000-4000-8000-000000000001",
+    "level_00000000-0000-4000-8000-000000000002",
+    "furniture_placement_00000000-0000-4000-8000-000000000006",
+    "furniture_placement_00000000-0000-4000-8000-000000000008",
+    "furniture_definition_00000000-0000-4000-8000-000000000007"
+  ];
+  return () => {
+    const id = ids.shift();
+    if (!id) throw new Error("The test exhausted its deterministic Furniture IDs");
     return id;
   };
 }
@@ -38,6 +57,7 @@ describe("Project Workspace acceptance seam", () => {
       name: "My renovation",
       units: "metric",
       activeLevelId: "level_00000000-0000-4000-8000-000000000002",
+      furnitureDefinitions: [],
       levels: [
         {
           id: "level_00000000-0000-4000-8000-000000000002",
@@ -45,6 +65,7 @@ describe("Project Workspace acceptance seam", () => {
           baseElevationMm: 0,
           defaultWallHeightMm: 2500,
           walls: [],
+          furniturePlacements: [],
           extensions: {}
         }
       ],
@@ -121,6 +142,30 @@ describe("Project Workspace acceptance seam", () => {
     expect(imported.document).toEqual(renamedWorkspace.document);
     expect(imported.activeLevel.name).toBe("Ground floor");
     expect(imported.diagnostics).toEqual([]);
+  });
+
+  it("preserves pre-Furniture 1.0 documents without silently adding collections", () => {
+    const legacyYaml = `schemaVersion: 1.0.0
+id: project_00000000-0000-4000-8000-000000000001
+name: Existing project
+units: metric
+activeLevelId: level_00000000-0000-4000-8000-000000000002
+levels:
+  - id: level_00000000-0000-4000-8000-000000000002
+    name: Ground floor
+    baseElevationMm: 0
+    defaultWallHeightMm: 2500
+    walls: []
+    extensions: {}
+extensions: {}
+`;
+
+    const imported = ProjectWorkspace.importYaml(legacyYaml);
+
+    expect(imported.document.furnitureDefinitions).toBeUndefined();
+    expect(imported.activeLevel.furniturePlacements).toBeUndefined();
+    expect(imported.exportYaml()).not.toContain("furnitureDefinitions");
+    expect(imported.exportYaml()).not.toContain("furniturePlacements");
   });
 
   it("rejects unsupported schema versions with a machine-readable diagnostic", () => {
@@ -234,5 +279,163 @@ extensions: {}
         })
       ])
     );
+  });
+
+  it("embeds a Furniture Definition when placing it and preserves placement geometry", () => {
+    const workspace = ProjectWorkspace.create("Furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    });
+    const definition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Dining table",
+      widthMm: 1800,
+      depthMm: 900,
+      heightMm: 750,
+      extensions: {}
+    };
+
+    const furnished = workspace.placeFurniture(definition, {
+      position: { x: 1200, y: -400 },
+      rotationDeg: 33.5
+    });
+    const placement = furnished.activeLevel.furniturePlacements[0]!;
+    const imported = ProjectWorkspace.importYaml(furnished.exportYaml());
+
+    expect(placement).toMatchObject({
+      definitionId: definition.id,
+      position: { x: 1200, y: -400 },
+      rotationDeg: 33.5,
+      elevationMm: 0
+    });
+    expect(furnished.document.furnitureDefinitions).toEqual([definition]);
+    expect(imported.document).toEqual(furnished.document);
+  });
+
+  it("reuses the embedded snapshot when the Item Library definition has drifted", () => {
+    const libraryDefinition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Dining table",
+      widthMm: 1800,
+      depthMm: 900,
+      heightMm: 750,
+      extensions: {}
+    };
+    const first = ProjectWorkspace.create("Furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    }).placeFurniture(libraryDefinition, { position: { x: 0, y: 0 } });
+    const otherFirst = ProjectWorkspace.create("Other furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    }).placeFurniture(libraryDefinition, { position: { x: 0, y: 0 } });
+    const editedEmbedded = first.updateFurnitureDefinition(
+      libraryDefinition.id,
+      { widthMm: 1700 }
+    );
+    const changedLibrary = { ...libraryDefinition, widthMm: 2000 };
+
+    const placedAfterEmbeddedEdit = editedEmbedded.placeFurniture(
+      libraryDefinition,
+      { position: { x: 1000, y: 0 } }
+    );
+    const placedAfterLibraryEdit = otherFirst.placeFurniture(
+      changedLibrary,
+      { position: { x: 2000, y: 0 } }
+    );
+
+    expect(placedAfterEmbeddedEdit.document.furnitureDefinitions).toEqual([
+      expect.objectContaining({ id: libraryDefinition.id, widthMm: 1700 })
+    ]);
+    expect(placedAfterLibraryEdit.document.furnitureDefinitions).toEqual([
+      libraryDefinition
+    ]);
+    expect(placedAfterEmbeddedEdit.activeLevel.furniturePlacements).toHaveLength(2);
+    expect(placedAfterLibraryEdit.activeLevel.furniturePlacements).toHaveLength(2);
+  });
+
+  it("moves, rotates, elevates, and deletes Furniture Placements", () => {
+    const definition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Armchair",
+      widthMm: 850,
+      depthMm: 900,
+      heightMm: 950,
+      extensions: {}
+    };
+    const workspace = ProjectWorkspace.create("Furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    }).placeFurniture(definition, { position: { x: 100, y: 200 } });
+    const placementId = workspace.activeLevel.furniturePlacements[0]!.id;
+
+    const edited = workspace.updateFurniturePlacement(placementId, {
+      position: { x: 800, y: 900 },
+      rotationDeg: -90,
+      elevationMm: 250
+    });
+
+    expect(edited.activeLevel.furniturePlacements[0]).toMatchObject({
+      position: { x: 800, y: 900 },
+      rotationDeg: 270,
+      elevationMm: 250
+    });
+    expect(edited.deleteFurniturePlacement(placementId)
+      .activeLevel.furniturePlacements).toEqual([]);
+  });
+
+  it("updates shared embedded definitions and can make one placement unique", () => {
+    const definition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Chair",
+      widthMm: 450,
+      depthMm: 500,
+      heightMm: 900,
+      extensions: {}
+    };
+    const idFactory = deterministicFurnitureIdFactory();
+    const first = ProjectWorkspace.create("Dining room", { idFactory })
+      .placeFurniture(definition, { position: { x: 0, y: 0 } });
+    const two = first.placeFurniture(definition, { position: { x: 1000, y: 0 } });
+    const [firstPlacement, secondPlacement] = two.activeLevel.furniturePlacements;
+    const shared = two.updateFurnitureDefinition(definition.id, { widthMm: 500 });
+    const unique = shared.makeFurniturePlacementUnique(firstPlacement!.id);
+    const uniqueDefinitionId = unique.activeLevel.furniturePlacements[0]!.definitionId;
+    const edited = unique.updateFurnitureDefinition(uniqueDefinitionId, {
+      name: "Wide chair",
+      widthMm: 650
+    });
+
+    expect(shared.document.furnitureDefinitions[0]!.widthMm).toBe(500);
+    expect(uniqueDefinitionId).not.toBe(definition.id);
+    expect(unique.activeLevel.furniturePlacements[1]!.definitionId)
+      .toBe(secondPlacement!.definitionId);
+    expect(edited.document.furnitureDefinitions.find(({ id }) => id === uniqueDefinitionId))
+      .toMatchObject({ name: "Wide chair", widthMm: 650 });
+    expect(edited.document.furnitureDefinitions.find(({ id }) => id === definition.id))
+      .toMatchObject({ name: "Chair", widthMm: 500 });
+  });
+
+  it("rejects non-positive dimensions and arbitrary placement dimension overrides", () => {
+    const workspace = ProjectWorkspace.create("Invalid furniture", {
+      idFactory: deterministicFurnitureIdFactory()
+    });
+    const invalidDefinition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Broken chair",
+      widthMm: 0,
+      depthMm: 500,
+      heightMm: 900,
+      extensions: {}
+    };
+
+    expect(() => workspace.placeFurniture(invalidDefinition, {
+      position: { x: 0, y: 0 }
+    })).toThrow(ProjectValidationError);
+
+    const validDefinition = { ...invalidDefinition, widthMm: 450 };
+    const furnished = workspace.placeFurniture(validDefinition, {
+      position: { x: 0, y: 0 }
+    });
+    const placementId = furnished.activeLevel.furniturePlacements[0]!.id;
+    expect(() => furnished.updateFurniturePlacement(placementId, {
+      widthMm: 123
+    } as never)).toThrow(/dimension overrides/i);
   });
 });
