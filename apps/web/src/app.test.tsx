@@ -49,6 +49,7 @@ describe("minimal Project Workspace", () => {
     fireEvent.change(screen.getByLabelText("Rename project"), {
       target: { value: "Kitchen remodel" }
     });
+    fireEvent.blur(screen.getByLabelText("Rename project"));
 
     expect(await screen.findByRole("heading", {
       name: "Kitchen remodel"
@@ -83,29 +84,40 @@ describe("minimal Project Workspace", () => {
     fireEvent.change(screen.getByLabelText("Wall length (mm)"), {
       target: { value: "4200" }
     });
-    await waitFor(() => expect(screen.getByLabelText("Wall length (mm)"))
-      .toHaveValue(4200));
+    fireEvent.blur(screen.getByLabelText("Wall length (mm)"));
+    await waitFor(() => expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("x: 1200"));
     fireEvent.change(screen.getByLabelText("Wall thickness (mm)"), {
       target: { value: "220" }
     });
-    await waitFor(() => expect(screen.getByLabelText("Wall thickness (mm)"))
-      .toHaveValue(220));
+    fireEvent.blur(screen.getByLabelText("Wall thickness (mm)"));
+    await waitFor(() => expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("thicknessMm: 220"));
     fireEvent.change(screen.getByLabelText("Wall angle (deg)"), {
       target: { value: "53.13" }
     });
-    await waitFor(() => expect(screen.getByLabelText("Wall angle (deg)"))
-      .toHaveValue(53.13));
+    fireEvent.blur(screen.getByLabelText("Wall angle (deg)"));
+    await waitFor(() => {
+      expect(screen.getByLabelText("Wall angle (deg)")).toHaveValue(53.13);
+      expect(screen.getByLabelText("Wall angle (deg)")).not.toBeDisabled();
+    });
     fireEvent.change(screen.getByLabelText("Wall height (mm)"), {
       target: { value: "2800" }
     });
-    await waitFor(() => expect(screen.getByLabelText("Wall height (mm)"))
-      .toHaveValue(2800));
+    fireEvent.blur(screen.getByLabelText("Wall height (mm)"));
+    await waitFor(() => expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("heightMm: 2800"));
 
     fireEvent.change(screen.getByLabelText("Start Y (mm)"), {
       target: { value: "200" }
     });
-    await waitFor(() => expect(screen.getByLabelText("Start Y (mm)"))
-      .toHaveValue(200));
+    fireEvent.blur(screen.getByLabelText("Start Y (mm)"));
+    await waitFor(() => expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("y: 200"));
     const yaml = (screen.getByLabelText(
       "Project Document YAML"
     ) as HTMLTextAreaElement).value;
@@ -124,6 +136,78 @@ describe("minimal Project Workspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Redo" }));
     expect(await screen.findByText("0 walls")).toBeInTheDocument();
+  });
+
+  it("selects a Wall without nudging it and previews deliberate dragging", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Wall gestures" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByText("1 wall");
+
+    const selectedWall = plan.querySelector(".selected-wall");
+    const initialPoints = selectedWall?.getAttribute("points");
+    fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
+    fireEvent.pointerMove(plan, { clientX: 252, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 252, clientY: 260 });
+    expect(plan.querySelector(".selected-wall")).toHaveAttribute(
+      "points",
+      initialPoints
+    );
+
+    fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
+    fireEvent.pointerMove(plan, { clientX: 350, clientY: 210 });
+    expect(plan.querySelector(".selected-wall")?.getAttribute("points"))
+      .not.toBe(initialPoints);
+    fireEvent.pointerUp(plan, { clientX: 350, clientY: 210 });
+    await waitFor(() => expect(screen.getByLabelText("Start X (mm)"))
+      .toHaveValue(-2000));
+  });
+
+  it("keeps a numeric field focused while composing a multi-character edit", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Buffered editing" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByText("1 wall");
+
+    const length = screen.getByLabelText("Wall length (mm)");
+    length.focus();
+    for (const value of ["4", "42", "420", "4200"]) {
+      fireEvent.change(length, { target: { value } });
+      expect(length).toHaveFocus();
+      expect(length).toHaveValue(Number(value));
+    }
+    expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("end: { x: 0");
+
+    fireEvent.blur(length);
+    await waitFor(() => expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("end: { x: 1200"));
   });
 
   it("adds, graphically moves, edits, deletes, and restores Opening types", async () => {
@@ -199,6 +283,7 @@ describe("minimal Project Workspace", () => {
     fireEvent.change(screen.getByLabelText("Wall length (mm)"), {
       target: { value: "600" }
     });
+    fireEvent.blur(screen.getByLabelText("Wall length (mm)"));
     const resolution = await screen.findByRole("alert", {
       name: "Opening conflict resolution"
     });
@@ -212,6 +297,7 @@ describe("minimal Project Workspace", () => {
     fireEvent.change(screen.getByLabelText("Wall length (mm)"), {
       target: { value: "600" }
     });
+    fireEvent.blur(screen.getByLabelText("Wall length (mm)"));
     fireEvent.click(await screen.findByRole("button", {
       name: "Fit openings and apply"
     }));
@@ -301,8 +387,10 @@ describe("minimal Project Workspace", () => {
     fireEvent.change(screen.getByLabelText("Room Label name"), {
       target: { value: "Kitchen" }
     });
-    await waitFor(() => expect(screen.getByLabelText("Room Label name"))
-      .toHaveValue("Kitchen"));
+    fireEvent.blur(screen.getByLabelText("Room Label name"));
+    await waitFor(() => expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("name: Kitchen"));
 
     fireEvent.pointerDown(plan, { clientX: 500, clientY: 110 });
     fireEvent.pointerUp(plan, { clientX: 600, clientY: 110 });
@@ -365,16 +453,17 @@ describe("minimal Project Workspace", () => {
     fireEvent.change(screen.getByLabelText("Furniture rotation (deg)"), {
       target: { value: "45" }
     });
-    await waitFor(() => {
-      expect(screen.getByLabelText("Furniture rotation (deg)")).toHaveValue(45);
-    });
+    fireEvent.blur(screen.getByLabelText("Furniture rotation (deg)"));
+    await waitFor(() => expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("rotationDeg: 45"));
     fireEvent.change(screen.getByLabelText("Furniture elevation (mm)"), {
       target: { value: "120" }
     });
-    await waitFor(() => {
-      expect(screen.getByLabelText("Furniture rotation (deg)")).toHaveValue(45);
-      expect(screen.getByLabelText("Furniture elevation (mm)")).toHaveValue(120);
-    });
+    fireEvent.blur(screen.getByLabelText("Furniture elevation (mm)"));
+    await waitFor(() => expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("elevationMm: 120"));
     const yaml = (screen.getByLabelText(
       "Project Document YAML"
     ) as HTMLTextAreaElement).value;

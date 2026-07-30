@@ -30,6 +30,7 @@ import {
   type PointerEvent,
   type WheelEvent
 } from "react";
+import { BufferedInput } from "./BufferedInput.js";
 import { useAutosavedProject } from "./use-autosaved-project.js";
 import { FurniturePlacementInspector } from "./FurniturePlacementInspector.js";
 import { ItemLibrary } from "./ItemLibrary.js";
@@ -50,6 +51,14 @@ function wallPolygonPoints(wall: Wall): string {
   return deriveWallFaces(wall)
     .map(({ x, y }) => `${x},${-y}`)
     .join(" ");
+}
+
+function exceededWallDragThreshold(
+  start: PointMm,
+  current: PointMm,
+  viewWidth: number
+): boolean {
+  return Math.hypot(current.x - start.x, current.y - start.y) >= viewWidth / 200;
 }
 
 function downloadYaml(source: string, projectName: string): void {
@@ -87,7 +96,7 @@ export function App() {
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
     | { kind: "draw"; start: PointMm }
-    | { kind: "move"; wallId: string; start: PointMm }
+    | { kind: "move"; wallId: string; start: PointMm; current?: PointMm }
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
     | { kind: "add-label" }
     | { kind: "move-label"; labelId: string; start: PointMm }
@@ -116,10 +125,28 @@ export function App() {
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
   const roomLabels = activeLevel?.roomLabels ?? [];
-  const rooms = workspace?.rooms ?? [];
+  const previewWorkspace = workspace && gesture?.kind === "move" && gesture.current
+    ? (() => {
+        const wall = workspace.activeLevel.walls.find(
+          ({ id }) => id === gesture.wallId
+        );
+        return wall
+          ? workspace.moveWall(wall.id, snapWallDelta(wall, {
+              x: gesture.current.x - gesture.start.x,
+              y: gesture.current.y - gesture.start.y
+            }, workspace.activeLevel.walls.filter(({ id }) => id !== wall.id),
+            view.width / 80))
+          : workspace;
+      })()
+    : workspace;
+  const displayedWalls = previewWorkspace?.activeLevel.walls ?? walls;
+  const rooms = previewWorkspace?.rooms ?? workspace?.rooms ?? [];
   const selectedRoomLabel = roomLabels.find(({ id }) => id === selectedRoomLabelId);
   const openings = activeLevel?.openings ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
+  const displayedSelectedWall = displayedWalls.find(
+    ({ id }) => id === selectedWallId
+  );
   const selectedOpening = openings.find(({ id }) => id === selectedOpeningId);
   const furniturePlacements = activeLevel?.furniturePlacements ?? [];
   const selectedFurniture = furniturePlacements.find(
@@ -284,7 +311,12 @@ export function App() {
       }
     } else if (gesture.kind === "move") {
       const wall = walls.find(({ id }) => id === gesture.wallId);
-      if (wall) {
+      const movedFarEnough = exceededWallDragThreshold(
+        gesture.start,
+        point,
+        view.width
+      );
+      if (wall && movedFarEnough) {
         const delta = snapWallDelta(wall, {
           x: point.x - gesture.start.x,
           y: point.y - gesture.start.y
@@ -340,6 +372,15 @@ export function App() {
       }));
     }
     setGesture(undefined);
+  }
+
+  function previewPlanGesture(event: PointerEvent<SVGSVGElement>): void {
+    if (gesture?.kind !== "move") return;
+    const point = eventPoint(event);
+    if (!exceededWallDragThreshold(gesture.start, point, view.width)) {
+      return;
+    }
+    setGesture({ ...gesture, current: point });
   }
 
   async function editFurniturePlacement(
@@ -471,13 +512,13 @@ export function App() {
     }
   }
 
-  async function renameProject(event: ChangeEvent<HTMLInputElement>): Promise<void> {
+  async function renameProject(value: string): Promise<void> {
     if (!workspace) {
       return;
     }
 
     try {
-      const renamedWorkspace = workspace.rename(event.target.value);
+      const renamedWorkspace = workspace.rename(value);
       await commit(renamedWorkspace);
     } catch (cause) {
       setOperationError(cause instanceof Error
@@ -620,7 +661,12 @@ export function App() {
         <aside className="project-panel" aria-label="Project properties">
           <label className="field">
             <span>Rename project</span>
-            <input disabled={isSaving} value={document.name} onChange={renameProject} />
+            <BufferedInput
+              aria-label="Rename project"
+              disabled={isSaving}
+              value={document.name}
+              onCommit={(value) => void renameProject(value)}
+            />
           </label>
           <div className="level-card">
             <span className="level-index">01</span>
@@ -699,7 +745,9 @@ export function App() {
             role="application"
             aria-label={`${activeLevel.name} wall editor`}
             onPointerDown={(event) => void beginPlanGesture(event)}
+            onPointerMove={previewPlanGesture}
             onPointerUp={(event) => void finishPlanGesture(event)}
+            onPointerCancel={() => setGesture(undefined)}
             onWheel={(event: WheelEvent<SVGSVGElement>) => {
               event.preventDefault();
               const factor = event.deltaY > 0 ? 1.1 : .9;
@@ -730,7 +778,7 @@ export function App() {
             ))}
             <path
               className="wall-surface"
-              d={walls.map((wall) => {
+              d={displayedWalls.map((wall) => {
                 const [first, ...rest] = deriveWallFaces(wall);
                 return first
                   ? `M ${first.x} ${-first.y} ${rest.map(({ x, y }) => `L ${x} ${-y}`).join(" ")} Z`
@@ -754,14 +802,14 @@ export function App() {
                 />
               );
             })}
-            {selectedWall ? (
+            {displayedSelectedWall ? (
               <polygon
                 className="selected-wall"
-                points={wallPolygonPoints(selectedWall)}
+                points={wallPolygonPoints(displayedSelectedWall)}
               />
             ) : null}
             {openings.map((opening) => {
-              const host = walls.find(({ id }) => id === opening.hostWallId);
+              const host = displayedWalls.find(({ id }) => id === opening.hostWallId);
               return host ? (
                 <OpeningSymbol
                   key={opening.id}
@@ -788,15 +836,15 @@ export function App() {
                 />
               ) : null;
             })}
-            {deriveWallJunctions(walls).map(({ point }) => (
+            {deriveWallJunctions(displayedWalls).map(({ point }) => (
               <circle className="junction" key={`${point.x}:${point.y}`} cx={point.x} cy={-point.y} r={view.width / 220} />
             ))}
-            {selectedWall ? (["start", "end"] as const).map((endpoint) => (
+            {displayedSelectedWall ? (["start", "end"] as const).map((endpoint) => (
               <circle
                 key={endpoint}
                 className="endpoint-handle"
-                cx={selectedWall.path[endpoint].x}
-                cy={-selectedWall.path[endpoint].y}
+                cx={displayedSelectedWall.path[endpoint].x}
+                cy={-displayedSelectedWall.path[endpoint].y}
                 r={view.width / 160}
               />
             )) : null}
@@ -824,7 +872,18 @@ export function App() {
                 ["thicknessMm", "Wall thickness (mm)", selectedWall.thicknessMm],
                 ["heightMm", "Wall height (mm)", selectedWall.heightMm]
               ] satisfies [WallEditField, string, number][]).map(([field, label, value]) => (
-                <label key={field}><span>{label}</span><input disabled={isSaving} aria-label={label} type="number" step={field === "angleDeg" ? "any" : 1} value={value} onChange={(event) => void editSelected(field, event.target.value)} /></label>
+                <label key={field}>
+                  <span>{label}</span>
+                  <BufferedInput
+                    aria-label={label}
+                    disabled={isSaving}
+                    resetKey={operationError}
+                    type="number"
+                    step={field === "angleDeg" ? "any" : 1}
+                    value={value}
+                    onCommit={(value) => void editSelected(field, value)}
+                  />
+                </label>
               ))}
               <button type="button" className="danger-button" disabled={isSaving} onClick={async () => {
                 if (await commit(workspace.deleteWall(selectedWall.id))) {
@@ -837,11 +896,12 @@ export function App() {
             <div className="room-label-properties" aria-label="Selected Room Label properties">
               <label>
                 <span>Room Label name</span>
-                <input
+                <BufferedInput
                   disabled={isSaving}
+                  resetKey={operationError}
                   aria-label="Room Label name"
                   value={selectedRoomLabel.name}
-                  onChange={(event) => void editSelectedRoomLabel("name", event.target.value)}
+                  onCommit={(value) => void editSelectedRoomLabel("name", value)}
                 />
               </label>
               {([
@@ -850,12 +910,13 @@ export function App() {
               ] satisfies [RoomLabelEditField, string, number][]).map(([field, label, value]) => (
                 <label key={field}>
                   <span>{label}</span>
-                  <input
-                    disabled={isSaving}
+                  <BufferedInput
                     aria-label={label}
+                    disabled={isSaving}
+                    resetKey={operationError}
                     type="number"
                     value={value}
-                    onChange={(event) => void editSelectedRoomLabel(field, event.target.value)}
+                    onCommit={(value) => void editSelectedRoomLabel(field, value)}
                   />
                 </label>
               ))}
