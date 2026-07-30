@@ -58,7 +58,7 @@
     },
     "existingStateRevisedAt": {
       "type": "string",
-      "minLength": 1
+      "format": "date-time"
     },
     "activePlan": {
       "oneOf": [
@@ -110,7 +110,7 @@
         "id": { "$ref": "#/$defs/designProposalId" },
         "name": { "type": "string", "minLength": 1, "maxLength": 120 },
         "sourceRevision": { "type": "integer", "minimum": 0 },
-        "sourceRevisedAt": { "type": "string", "minLength": 1 },
+        "sourceRevisedAt": { "type": "string", "format": "date-time" },
         "activeLevelId": {
           "type": "string",
           "pattern": "^level_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stringify } from "yaml";
 import {
   CURRENT_SCHEMA_VERSION,
   ProjectValidationError,
@@ -175,6 +176,130 @@ describe("Project Workspace acceptance seam", () => {
       sourceRevisedAt: "2026-07-31T10:00:00.000Z",
       currentRevision: corrected.document.existingStateRevision,
       currentRevisedAt: "2026-08-01T11:30:00.000Z"
+    });
+  });
+
+  it("roots active Design Proposal warnings at the proposal document path", () => {
+    const workspace = ProjectWorkspace.create("Proposal diagnostics", {
+      idFactory: deterministicIdFactory()
+    })
+      .addRoomLabel({
+        name: "Outside",
+        position: { x: 1000, y: 1000 }
+      })
+      .createDesignProposal("Alternative");
+
+    expect(workspace.diagnostics).toContainEqual(expect.objectContaining({
+      code: "room-label.outside-room",
+      path: "/designProposals/0/levels/0/roomLabels/0/position"
+    }));
+  });
+
+  it("protects the Design Proposal schema and stable-reference contract", () => {
+    const workspace = ProjectWorkspace.create("Proposal contract", {
+      idFactory: deterministicIdFactory()
+    }).createDesignProposal("Extended alternative");
+    const document = workspace.document;
+    const proposal = document.designProposals![0]!;
+    proposal.extensions["https://example.com/smarchitect/proposal-notes"] = {
+      note: "Preserved"
+    };
+
+    expect(validateProjectDocument(document)).toEqual([]);
+    expect(
+      ProjectWorkspace.importYaml(stringify(document))
+        .document.designProposals![0]!.extensions
+    ).toEqual({
+      "https://example.com/smarchitect/proposal-notes": {
+        note: "Preserved"
+      }
+    });
+
+    const unnamespacedExtension = structuredClone(document);
+    unnamespacedExtension.designProposals![0]!.extensions.notes = {
+      note: "Rejected"
+    };
+    expect(validateProjectDocument(unnamespacedExtension)).toContainEqual(
+      expect.objectContaining({
+        code: "schema.invalid",
+        path: "/designProposals/0/extensions"
+      })
+    );
+
+    const malformedId = structuredClone(document);
+    malformedId.designProposals![0]!.id = "proposal-not-stable";
+    expect(validateProjectDocument(malformedId)).toContainEqual(
+      expect.objectContaining({
+        code: "stable-id.invalid",
+        path: "/designProposals/0/id"
+      })
+    );
+
+    const danglingSelection = structuredClone(document);
+    danglingSelection.activePlan = {
+      kind: "design-proposal",
+      proposalId: "design_proposal_00000000-0000-4000-8000-000000000099"
+    };
+    expect(validateProjectDocument(danglingSelection)).toContainEqual(
+      expect.objectContaining({
+        code: "active-plan.proposal.missing",
+        path: "/activePlan/proposalId"
+      })
+    );
+
+    const unknownField = structuredClone(document) as unknown as {
+      designProposals: Array<Record<string, unknown>>;
+    };
+    unknownField.designProposals[0]!.comparisonMode = true;
+    expect(validateProjectDocument(unknownField)).toContainEqual(
+      expect.objectContaining({
+        code: "schema.invalid",
+        path: "/designProposals/0"
+      })
+    );
+  });
+
+  it("rejects missing, invalid, and impossible Design Proposal provenance", () => {
+    const document = ProjectWorkspace.create("Proposal provenance", {
+      idFactory: deterministicIdFactory(),
+      now: () => new Date("2026-07-31T10:00:00.000Z")
+    }).createDesignProposal("Alternative").document;
+
+    const missingExistingStateProvenance = structuredClone(document);
+    delete missingExistingStateProvenance.existingStateRevision;
+    delete missingExistingStateProvenance.existingStateRevisedAt;
+    expect(validateProjectDocument(missingExistingStateProvenance)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "/existingStateRevision" }),
+        expect.objectContaining({ path: "/existingStateRevisedAt" })
+      ])
+    );
+
+    const invalidTimestamp = structuredClone(document);
+    invalidTimestamp.designProposals![0]!.sourceRevisedAt = "nope";
+    expect(validateProjectDocument(invalidTimestamp)).toContainEqual(
+      expect.objectContaining({
+        code: "schema.invalid",
+        path: "/designProposals/0/sourceRevisedAt"
+      })
+    );
+
+    const invalidExistingStateTimestamp = structuredClone(document);
+    invalidExistingStateTimestamp.existingStateRevisedAt = "nope";
+    expect(validateProjectDocument(invalidExistingStateTimestamp))
+      .toContainEqual(expect.objectContaining({
+        code: "schema.invalid",
+        path: "/existingStateRevisedAt"
+      }));
+
+    const futureRevision = structuredClone(document);
+    futureRevision.designProposals![0]!.sourceRevision =
+      futureRevision.existingStateRevision! + 1;
+    expect(validateProjectDocument(futureRevision)).toContainEqual({
+      code: "design-proposal.source-revision.future",
+      severity: "error",
+      path: "/designProposals/0/sourceRevision",
+      message: "Design Proposal source revision must not be newer than the Existing State."
     });
   });
 

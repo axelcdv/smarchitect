@@ -479,7 +479,9 @@ export function App() {
     } catch (cause) {
       if (cause instanceof ProjectValidationError) {
         const openingIds = cause.diagnostics.flatMap(({ path }) => {
-          const match = /^\/levels\/\d+\/openings\/(\d+)\//.exec(path);
+          const match =
+            /^(?:\/designProposals\/\d+)?\/levels\/\d+\/openings\/(\d+)\//
+              .exec(path);
           const opening = match ? openings[Number(match[1])] : undefined;
           return opening ? [opening.id] : [];
         });

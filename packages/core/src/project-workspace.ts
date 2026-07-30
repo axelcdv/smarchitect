@@ -129,10 +129,6 @@ function cloneProjectDocument(document: ProjectDocument): ProjectDocument {
   return structuredClone(document);
 }
 
-function existingStatePlan(document: ProjectDocument): PlanSnapshot {
-  return document;
-}
-
 function selectedProposal(document: ProjectDocument): DesignProposal | undefined {
   if (document.activePlan?.kind !== "design-proposal") return undefined;
   const proposalId = document.activePlan.proposalId;
@@ -142,7 +138,16 @@ function selectedProposal(document: ProjectDocument): DesignProposal | undefined
 }
 
 function selectedPlan(document: ProjectDocument): PlanSnapshot {
-  return selectedProposal(document) ?? existingStatePlan(document);
+  return selectedProposal(document) ?? document;
+}
+
+function selectedPlanPath(document: ProjectDocument): string {
+  if (document.activePlan?.kind !== "design-proposal") return "";
+  const proposalId = document.activePlan.proposalId;
+  const proposalIndex = document.designProposals?.findIndex(
+    ({ id }) => id === proposalId
+  ) ?? -1;
+  return proposalIndex >= 0 ? `/designProposals/${proposalIndex}` : "";
 }
 
 function revisionOf(document: ProjectDocument): number {
@@ -390,6 +395,7 @@ export class ProjectWorkspace {
   get diagnostics(): Diagnostic[] {
     const diagnostics = validateProjectDocument(this.#document);
     const plan = selectedPlan(this.#document);
+    const planPath = selectedPlanPath(this.#document);
     const levelIndex = plan.levels.findIndex(
       ({ id }) => id === plan.activeLevelId
     );
@@ -401,7 +407,7 @@ export class ProjectWorkspace {
         diagnostics.push({
           code: "room-label.outside-room",
           severity: "warning",
-          path: `/levels/${levelIndex}/roomLabels/${labelIndex}/position`,
+          path: `${planPath}/levels/${levelIndex}/roomLabels/${labelIndex}/position`,
           message: `Room Label "${label.name}" is outside every enclosed Room. Move it inside a Room or delete it.`
         });
       }
@@ -415,7 +421,7 @@ export class ProjectWorkspace {
         diagnostics.push({
           code: "room-label.merge-conflict",
           severity: "warning",
-          path: `/levels/${levelIndex}/roomLabels`,
+          path: `${planPath}/levels/${levelIndex}/roomLabels`,
           message: `Merged Room contains multiple labels (${names}). Move or delete labels to choose one explicitly.`
         });
       }

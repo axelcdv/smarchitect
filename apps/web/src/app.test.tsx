@@ -225,6 +225,55 @@ describe("minimal Project Workspace", () => {
     })).not.toBeInTheDocument();
   });
 
+  it("resolves Opening conflicts while editing a Design Proposal", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Proposal opening conflicts" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByText("1 wall");
+    fireEvent.click(screen.getByRole("button", { name: "Add door" }));
+    await screen.findByText("1 opening");
+    fireEvent.change(screen.getByLabelText("New Design Proposal name"), {
+      target: { value: "Short wall" }
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Create from Existing State"
+    }));
+    await screen.findByText("Design Proposal");
+    fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
+
+    fireEvent.change(screen.getByLabelText("Wall length (mm)"), {
+      target: { value: "600" }
+    });
+    const resolution = await screen.findByRole("alert", {
+      name: "Opening conflict resolution"
+    });
+    expect(resolution).toHaveTextContent("door opening_");
+    fireEvent.click(screen.getByRole("button", {
+      name: "Fit openings and apply"
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Wall length (mm)")).toHaveValue(600);
+      expect((screen.getByLabelText(
+        "Project Document YAML"
+      ) as HTMLTextAreaElement).value).toContain("widthMm: 600");
+      expect(screen.queryByRole("alert", {
+        name: "Opening conflict resolution"
+      })).not.toBeInTheDocument();
+    });
+  });
+
   it("imports a Project Document and exports it as YAML", async () => {
     const yaml = ProjectWorkspace.create("Imported apartment").exportYaml();
     const file = new File([yaml], "apartment.yaml", {

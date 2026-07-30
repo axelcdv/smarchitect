@@ -22,6 +22,13 @@ const ajv = new Ajv2020({
   allErrors: true,
   strict: true
 });
+ajv.addFormat("date-time", {
+  type: "string",
+  validate: (value: string) =>
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
+      .test(value)
+    && Number.isFinite(Date.parse(value))
+});
 const validateStructure = ajv.compile<ProjectDocument>(projectDocumentSchema);
 
 function schemaErrorPath(error: ErrorObject): string {
@@ -40,11 +47,13 @@ function schemaErrorCode(error: ErrorObject): string {
     error.keyword === "pattern" &&
     (path === "/id" ||
       path === "/activeLevelId" ||
-      /^\/levels\/\d+\/id$/.test(path) ||
-      /^\/levels\/\d+\/openings\/\d+\/(id|hostWallId)$/.test(path) ||
-      /^\/furnitureDefinitions\/\d+\/id$/.test(path) ||
-      /^\/fixtureDefinitions\/\d+\/id$/.test(path) ||
-      /^\/levels\/\d+\/(furniturePlacements|fixturePlacements)\/\d+\/(id|definitionId)$/.test(path))
+      path === "/activePlan/proposalId" ||
+      /^\/designProposals\/\d+\/id$/.test(path) ||
+      /^(?:\/designProposals\/\d+)?\/levels\/\d+\/id$/.test(path) ||
+      /^(?:\/designProposals\/\d+)?\/levels\/\d+\/openings\/\d+\/(id|hostWallId)$/.test(path) ||
+      /^(?:\/designProposals\/\d+)?\/furnitureDefinitions\/\d+\/id$/.test(path) ||
+      /^(?:\/designProposals\/\d+)?\/fixtureDefinitions\/\d+\/id$/.test(path) ||
+      /^(?:\/designProposals\/\d+)?\/levels\/\d+\/(furniturePlacements|fixturePlacements)\/\d+\/(id|definitionId)$/.test(path))
   ) {
     return "stable-id.invalid";
   }
@@ -246,8 +255,28 @@ function planSemanticDiagnostics(document: PlanSnapshot): Diagnostic[] {
 function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
   const diagnostics = planSemanticDiagnostics(document);
   const proposalIds = new Set<string>();
+  const proposals = document.designProposals ?? [];
 
-  for (const [index, proposal] of (document.designProposals ?? []).entries()) {
+  if (proposals.length && document.existingStateRevision === undefined) {
+    diagnostics.push({
+      code: "design-proposal.provenance.missing",
+      severity: "error",
+      path: "/existingStateRevision",
+      message:
+        "Existing State revision is required when Design Proposals exist."
+    });
+  }
+  if (proposals.length && document.existingStateRevisedAt === undefined) {
+    diagnostics.push({
+      code: "design-proposal.provenance.missing",
+      severity: "error",
+      path: "/existingStateRevisedAt",
+      message:
+        "Existing State revision date is required when Design Proposals exist."
+    });
+  }
+
+  for (const [index, proposal] of proposals.entries()) {
     if (proposalIds.has(proposal.id)) {
       diagnostics.push({
         code: "design-proposal.id.duplicate",
@@ -257,6 +286,18 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
       });
     }
     proposalIds.add(proposal.id);
+    if (
+      document.existingStateRevision !== undefined
+      && proposal.sourceRevision > document.existingStateRevision
+    ) {
+      diagnostics.push({
+        code: "design-proposal.source-revision.future",
+        severity: "error",
+        path: `/designProposals/${index}/sourceRevision`,
+        message:
+          "Design Proposal source revision must not be newer than the Existing State."
+      });
+    }
     diagnostics.push(...planSemanticDiagnostics(proposal).map((diagnostic) => ({
       ...diagnostic,
       path: `/designProposals/${index}${diagnostic.path}`
