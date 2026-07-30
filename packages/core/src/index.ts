@@ -1,4 +1,15 @@
 export {
+  addFurnitureDefinition,
+  createFurnitureDefinition,
+  deleteFurnitureDefinition,
+  updateFurnitureDefinition,
+  validateFurnitureLibrary
+} from "./furniture-library.js";
+export {
+  furnitureFootprintCorners,
+  furniturePlacementContainsPoint
+} from "./furniture-geometry.js";
+export {
   ProjectValidationError,
   ProjectWorkspace,
   createProjectDocument
@@ -30,11 +41,18 @@ export {
 } from "./opening-geometry.js";
 export {
   CURRENT_SCHEMA_VERSION,
+  type CreateFurnitureDefinitionOptions,
   type CreateProjectDocumentOptions,
   type Diagnostic,
   type DiagnosticSeverity,
   type EntityKind,
   type ExtensionData,
+  type FurnitureDefinition,
+  type FurnitureDefinitionInput,
+  type FurnitureDefinitionUpdate,
+  type FurniturePlacement,
+  type FurniturePlacementInput,
+  type FurniturePlacementUpdate,
   type IdFactory,
   type Level,
   type LineSegmentMm,

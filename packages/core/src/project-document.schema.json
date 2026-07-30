@@ -33,6 +33,12 @@
       "type": "string",
       "pattern": "^level_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
     },
+    "furnitureDefinitions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/furnitureDefinition"
+      }
+    },
     "levels": {
       "type": "array",
       "minItems": 1,
@@ -54,7 +60,6 @@
         "baseElevationMm",
         "defaultWallHeightMm",
         "walls",
-        "openings",
         "extensions"
       ],
       "properties": {
@@ -84,6 +89,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/opening"
+          }
+        },
+        "furniturePlacements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/furniturePlacement"
           }
         },
         "extensions": {
@@ -236,6 +247,55 @@
       "properties": {
         "kind": { "const": "sliding" },
         "slideDirection": { "$ref": "#/$defs/pathDirection" }
+      }
+    },
+    "furnitureDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "widthMm",
+        "depthMm",
+        "heightMm",
+        "extensions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^furniture_definition_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "widthMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "depthMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "heightMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "furniturePlacement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "definitionId",
+        "position",
+        "rotationDeg",
+        "elevationMm",
+        "extensions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^furniture_placement_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "definitionId": {
+          "type": "string",
+          "pattern": "^furniture_definition_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "position": { "$ref": "#/$defs/point" },
+        "rotationDeg": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+        "elevationMm": { "type": "integer" },
+        "extensions": { "$ref": "#/$defs/extensions" }
       }
     },
     "extensions": {

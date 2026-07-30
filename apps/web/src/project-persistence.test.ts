@@ -8,8 +8,12 @@ import {
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   AutosavedProject,
+  AutosavedFurnitureLibrary,
+  IndexedDbFurnitureLibraryRepository,
   IndexedDbProjectRepository,
   SerializedProjectRepository,
+  type FurnitureLibraryHistorySnapshot,
+  type FurnitureLibraryRepository,
   type ProjectRepository
 } from "./project-persistence.js";
 
@@ -25,6 +29,18 @@ class MemoryProjectRepository implements ProjectRepository {
   }
 }
 
+class MemoryFurnitureLibraryRepository implements FurnitureLibraryRepository {
+  snapshot?: FurnitureLibraryHistorySnapshot;
+
+  async load(): Promise<FurnitureLibraryHistorySnapshot | undefined> {
+    return this.snapshot ? structuredClone(this.snapshot) : undefined;
+  }
+
+  async save(snapshot: FurnitureLibraryHistorySnapshot): Promise<void> {
+    this.snapshot = structuredClone(snapshot);
+  }
+}
+
 function deleteTestDatabase(): Promise<void> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.deleteDatabase("smarchitect");
@@ -36,6 +52,58 @@ function deleteTestDatabase(): Promise<void> {
 beforeEach(deleteTestDatabase);
 
 describe("autosaved project recovery", () => {
+  it("persists reusable Furniture Definitions independently of a project", async () => {
+    const repository = new IndexedDbFurnitureLibraryRepository();
+    const definitions = [{
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Sofa",
+      widthMm: 2200,
+      depthMm: 950,
+      heightMm: 850,
+      extensions: {}
+    }];
+
+    let library = await AutosavedFurnitureLibrary.create(repository);
+    await library.accept(definitions);
+    library = (await AutosavedFurnitureLibrary.restore(
+      new IndexedDbFurnitureLibraryRepository()
+    ))!;
+    expect(library.definitions).toEqual(definitions);
+    expect(library.canUndo).toBe(true);
+    expect(await library.undo()).toEqual([]);
+    library = (await AutosavedFurnitureLibrary.restore(
+      new IndexedDbFurnitureLibraryRepository()
+    ))!;
+    expect(library.canRedo).toBe(true);
+    expect(await library.redo()).toEqual(definitions);
+  });
+
+  it("serializes concurrent Item Library transactions without losing edits", async () => {
+    const repository = new MemoryFurnitureLibraryRepository();
+    const library = await AutosavedFurnitureLibrary.create(repository);
+    const sofa = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Sofa",
+      widthMm: 2200,
+      depthMm: 950,
+      heightMm: 850,
+      extensions: {}
+    };
+    const chair = {
+      ...sofa,
+      id: "furniture_definition_00000000-0000-4000-8000-000000000006",
+      name: "Chair",
+      widthMm: 750
+    };
+
+    const addingSofa = library.transact((definitions) => [...definitions, sofa]);
+    const addingChair = library.transact((definitions) => [...definitions, chair]);
+    await Promise.all([addingSofa, addingChair]);
+
+    expect(library.definitions).toEqual([sofa, chair]);
+    expect(library.snapshot().entries).toHaveLength(3);
+  });
+
   it("restores exact add, edit, move, and delete states between IndexedDB reloads", async () => {
     const repository = new SerializedProjectRepository(
       new IndexedDbProjectRepository()

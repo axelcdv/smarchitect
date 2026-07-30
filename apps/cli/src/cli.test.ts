@@ -7,13 +7,14 @@ id: project_00000000-0000-4000-8000-000000000001
 name: CLI project
 units: metric
 activeLevelId: level_00000000-0000-4000-8000-000000000002
+furnitureDefinitions: []
 levels:
   - id: level_00000000-0000-4000-8000-000000000002
     name: Ground floor
     baseElevationMm: 0
     defaultWallHeightMm: 2500
     walls: []
-    openings: []
+    furniturePlacements: []
     extensions: {}
 extensions: {}
 `;

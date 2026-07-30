@@ -261,4 +261,140 @@ describe("minimal Project Workspace", () => {
     expect(click).toHaveBeenCalledOnce();
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:project-document");
   });
+
+  it("creates reusable Furniture, places and edits it, and persists it through Undo", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Furnished apartment" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Furnished apartment" });
+
+    fireEvent.change(screen.getByLabelText("New Furniture name"), {
+      target: { value: "Dining table" }
+    });
+    fireEvent.change(screen.getByLabelText("New Furniture widthMm"), {
+      target: { value: "1800" }
+    });
+    fireEvent.change(screen.getByLabelText("New Furniture depthMm"), {
+      target: { value: "900" }
+    });
+    fireEvent.change(screen.getByLabelText("New Furniture heightMm"), {
+      target: { value: "750" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Furniture" }));
+
+    await screen.findByRole("button", { name: "Place" });
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Place" })).not.toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Undo Item Library" }));
+    const place = await screen.findByRole("button", { name: "Place" });
+    fireEvent.click(place);
+    const plan = screen.getByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 400, clientY: 260 });
+
+    expect(await screen.findByText("1 Furniture Placement")).toBeInTheDocument();
+    expect(screen.getByLabelText("Furniture elevation (mm)")).toHaveValue(0);
+    fireEvent.change(screen.getByLabelText("Furniture rotation (deg)"), {
+      target: { value: "45" }
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("Furniture rotation (deg)")).toHaveValue(45);
+    });
+    fireEvent.change(screen.getByLabelText("Furniture elevation (mm)"), {
+      target: { value: "120" }
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("Furniture rotation (deg)")).toHaveValue(45);
+      expect(screen.getByLabelText("Furniture elevation (mm)")).toHaveValue(120);
+    });
+    const yaml = (screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value;
+    expect(yaml).toContain("furnitureDefinitions:");
+    expect(yaml).toContain("definitionId:");
+    expect(yaml).toContain("rotationDeg: 45");
+    expect(yaml).toContain("elevationMm: 120");
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Delete Furniture Placement"
+    }));
+    expect(await screen.findByText("0 Furniture Placements")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("1 Furniture Placement")).toBeInTheDocument();
+  });
+
+  it("synchronizes controlled Item Library fields after Undo and Redo", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Library history" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Library history" });
+
+    fireEvent.change(screen.getByLabelText("New Furniture name"), {
+      target: { value: "Chair" }
+    });
+    fireEvent.change(screen.getByLabelText("New Furniture widthMm"), {
+      target: { value: "450" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Furniture" }));
+
+    const name = await screen.findByLabelText("Chair name");
+    expect(screen.getByLabelText("Chair widthMm")).toHaveValue(450);
+    fireEvent.change(name, { target: { value: "Armchair" } });
+    fireEvent.blur(name);
+    await screen.findByLabelText("Armchair name");
+    fireEvent.change(screen.getByLabelText("Armchair widthMm"), {
+      target: { value: "600" }
+    });
+    fireEvent.blur(screen.getByLabelText("Armchair widthMm"));
+    await waitFor(() => expect(screen.getByLabelText("Armchair widthMm"))
+      .toHaveValue(600));
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo Item Library" }));
+    await waitFor(() => expect(screen.getByLabelText("Armchair widthMm"))
+      .toHaveValue(450));
+    fireEvent.click(screen.getByRole("button", { name: "Undo Item Library" }));
+    await waitFor(() => expect(screen.getByLabelText("Chair name"))
+      .toHaveValue("Chair"));
+    expect(screen.getByLabelText("Chair widthMm")).toHaveValue(450);
+
+    fireEvent.click(screen.getByRole("button", { name: "Redo Item Library" }));
+    await waitFor(() => expect(screen.getByLabelText("Armchair name"))
+      .toHaveValue("Armchair"));
+    fireEvent.click(screen.getByRole("button", { name: "Redo Item Library" }));
+    await waitFor(() => expect(screen.getByLabelText("Armchair widthMm"))
+      .toHaveValue(600));
+  });
+
+  it("rejects invalid Item Library dimensions at the browser acceptance seam", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Valid library" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Valid library" });
+
+    fireEvent.change(screen.getByLabelText("New Furniture name"), {
+      target: { value: "Broken chair" }
+    });
+    fireEvent.change(screen.getByLabelText("New Furniture widthMm"), {
+      target: { value: "0" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Furniture" }));
+
+    expect(await screen.findByText(/positive integer millimetres/i))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Place" }))
+      .not.toBeInTheDocument();
+  });
 });

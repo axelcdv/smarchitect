@@ -202,7 +202,7 @@ h2 {
 .workspace-grid {
   display: grid;
   min-height: calc(100vh - 112px);
-  grid-template-columns: 260px minmax(480px, 1fr) minmax(340px, 0.65fr);
+  grid-template-columns: 300px minmax(480px, 1fr) minmax(340px, 0.65fr);
 }
 
 .project-panel,
@@ -352,9 +352,21 @@ h2 {
   stroke-width: 18;
 }
 
+.furniture-footprint {
+  fill: rgb(49 95 76 / 34%);
+  pointer-events: none;
+  stroke: var(--green);
+  stroke-width: 14;
+}
+
+.selected-furniture {
+  fill: rgb(217 87 63 / 38%);
+  stroke: var(--accent);
+  stroke-width: 24;
+}
+
 .plan-toolbar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   margin-bottom: 10px;
@@ -373,8 +385,8 @@ h2 {
   font-size: 11px;
 }
 
-.plan-toolbar span:last-of-type {
-  margin-right: auto;
+.plan-toolbar .plan-count {
+  margin-left: auto;
 }
 
 .plan-toolbar .tool-active {
@@ -384,7 +396,8 @@ h2 {
 }
 
 .wall-properties,
-.opening-properties {
+.opening-properties,
+.furniture-properties {
   display: grid;
   grid-template-columns: repeat(4, minmax(100px, 1fr));
   gap: 10px;
@@ -394,6 +407,29 @@ h2 {
   background: var(--paper);
 }
 
+.wall-properties label,
+.opening-properties label,
+.furniture-properties label {
+  display: grid;
+  gap: 4px;
+}
+
+.wall-properties label span,
+.opening-properties label span,
+.furniture-properties label span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.wall-properties input,
+.opening-properties input,
+.opening-properties select,
+.furniture-properties input {
+  min-width: 0;
+  border: 1px solid var(--line);
+  padding: 7px;
+}
+
 .opening-conflict {
   border: 1px solid #b6412f;
   padding: 12px;
@@ -401,26 +437,6 @@ h2 {
 
 .opening-conflict button {
   margin-right: 8px;
-}
-
-.wall-properties label,
-.opening-properties label {
-  display: grid;
-  gap: 4px;
-}
-
-.wall-properties label span,
-.opening-properties label span {
-  color: var(--muted);
-  font-size: 10px;
-}
-
-.wall-properties input,
-.opening-properties input,
-.opening-properties select {
-  min-width: 0;
-  border: 1px solid var(--line);
-  padding: 7px;
 }
 
 .opening-symbol {
@@ -469,6 +485,80 @@ h2 {
 .selected-opening .window-pane,
 .selected-opening .door-swing {
   stroke: var(--accent);
+}
+
+.furniture-properties {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(100px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.furniture-properties h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.item-library {
+  margin-top: 26px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.library-history-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.furniture-definition-form,
+.library-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.furniture-definition-form label:first-child,
+.library-card label:first-child,
+.furniture-definition-form button,
+.library-actions {
+  grid-column: 1 / -1;
+}
+
+.furniture-definition-form label,
+.library-card label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.furniture-definition-form span,
+.library-card span {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: capitalize;
+}
+
+.furniture-definition-form input,
+.library-card input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  padding: 6px;
+}
+
+.library-card {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.library-actions {
+  display: flex;
+  gap: 7px;
 }
 
 .danger-button {
