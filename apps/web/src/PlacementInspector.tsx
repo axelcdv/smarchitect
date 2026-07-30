@@ -8,6 +8,7 @@ import {
   type FurniturePlacement,
   type FurniturePlacementUpdate
 } from "@smarchitect/core";
+import { BufferedInput } from "./BufferedInput.js";
 
 interface PlacementInspectorProps {
   definition: FurnitureDefinition | FixtureDefinition;
@@ -58,14 +59,14 @@ export function PlacementInspector({
       ] as const).map(([field, label, value]) => (
         <label key={field}>
           <span>{label}</span>
-          <input
+          <BufferedInput
             aria-label={label}
             disabled={disabled}
             type="number"
             step={field === "rotationDeg" ? "any" : "1"}
             value={value}
-            onChange={(event) => {
-              const numeric = Number(event.target.value);
+            onCommit={(value) => {
+              const numeric = Number(value);
               if (!Number.isFinite(numeric)) return;
               onUpdatePlacement(field === "x"
                 ? { position: { ...placement.position, x: Math.round(numeric) } }
@@ -83,15 +84,15 @@ export function PlacementInspector({
       ] as const).map(([field, label]) => (
         <label key={field}>
           <span>{label}</span>
-          <input
+          <BufferedInput
             aria-label={label}
             disabled={disabled}
             type="number"
             min="1"
             step="1"
             value={definition[field]}
-            onChange={(event) => onUpdateDefinition({
-              [field]: Math.round(Number(event.target.value))
+            onCommit={(value) => onUpdateDefinition({
+              [field]: Math.round(Number(value))
             })}
           />
         </label>

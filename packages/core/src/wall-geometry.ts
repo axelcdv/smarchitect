@@ -193,6 +193,24 @@ export function snapWallDelta(
     : { ...delta };
 }
 
+export function exceedsWallDragThreshold(
+  start: PointMm,
+  current: PointMm,
+  thresholdMm: number
+): boolean {
+  return distance(start, current) >= thresholdMm;
+}
+
+export function deriveWallDragDelta(
+  wall: Wall,
+  start: PointMm,
+  current: PointMm,
+  otherWalls: Wall[],
+  snapToleranceMm: number
+): PointMm {
+  return snapWallDelta(wall, subtract(current, start), otherWalls, snapToleranceMm);
+}
+
 export function normalizeAngleDeg(angleDeg: number): number {
   return ((angleDeg % 360) + 360) % 360;
 }

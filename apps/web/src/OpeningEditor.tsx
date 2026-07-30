@@ -7,6 +7,7 @@ import {
   type Wall
 } from "@smarchitect/core";
 import type { PointerEvent } from "react";
+import { BufferedInput } from "./BufferedInput.js";
 
 type OpeningEditField = "positionMm" | "widthMm" | "heightMm" | "sillHeightMm";
 type OperationKind = "fixed" | "hinged" | "sliding";
@@ -169,7 +170,14 @@ export function OpeningProperties({
       {numericFields.map(([field, label, value]) => (
         <label key={field}>
           <span>{label}</span>
-          <input disabled={isSaving} aria-label={label} type="number" step="1" value={value} onChange={(event) => editNumber(field, event.target.value)} />
+          <BufferedInput
+            aria-label={label}
+            disabled={isSaving}
+            type="number"
+            step="1"
+            value={value}
+            onCommit={(value) => editNumber(field, value)}
+          />
         </label>
       ))}
       {operation ? (

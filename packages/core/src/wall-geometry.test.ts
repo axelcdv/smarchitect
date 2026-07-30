@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  deriveWallDragDelta,
   deriveWallFaces,
   deriveWallJunctions,
+  exceedsWallDragThreshold,
   findWallAtPoint,
   findWallEndpointAtPoint,
   normalizeAngleDeg,
@@ -99,6 +101,32 @@ describe("wall geometry", () => {
       x: 1010,
       y: 0
     });
+  });
+
+  it("activates a Wall drag only at the configured geometric threshold", () => {
+    expect(exceedsWallDragThreshold(
+      { x: 0, y: 0 },
+      { x: 3, y: 4 },
+      5
+    )).toBe(true);
+    expect(exceedsWallDragThreshold(
+      { x: 0, y: 0 },
+      { x: 3, y: 4 },
+      5.01
+    )).toBe(false);
+  });
+
+  it("derives the same snapped delta from Wall drag pointer positions", () => {
+    const moving = wall("wall_moving", [0, 0], [1000, 0]);
+    const fixed = wall("wall_fixed", [2010, 0], [3000, 0]);
+
+    expect(deriveWallDragDelta(
+      moving,
+      { x: 100, y: 100 },
+      { x: 1105, y: 104 },
+      [fixed],
+      10
+    )).toEqual({ x: 1010, y: 0 });
   });
 
   it("normalizes arbitrary angles to the canonical range", () => {

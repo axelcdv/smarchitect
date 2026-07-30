@@ -31,7 +31,9 @@ export {
 } from "./validation.js";
 export {
   deriveWallFaces,
+  deriveWallDragDelta,
   deriveWallJunctions,
+  exceedsWallDragThreshold,
   findWallAtPoint,
   findWallEndpointAtPoint,
   normalizeAngleDeg,
