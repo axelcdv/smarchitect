@@ -71,6 +71,7 @@ function downloadYaml(source: string, projectName: string): void {
 
 export function App() {
   const [draftName, setDraftName] = useState("");
+  const [proposalName, setProposalName] = useState("");
   const [operationError, setOperationError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
   const [selectedRoomLabelId, setSelectedRoomLabelId] = useState<string>();
@@ -119,7 +120,10 @@ export function App() {
   } = autosavedProject;
   const error = persistenceError || operationError;
   const document = workspace?.document;
+  const activePlan = workspace?.activePlan;
   const activeLevel = workspace?.activeLevel;
+  const activeProposal = workspace?.activeDesignProposal;
+  const proposalStaleness = workspace?.activeProposalStaleness;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
   const roomLabels = activeLevel?.roomLabels ?? [];
@@ -133,7 +137,7 @@ export function App() {
   const selectedFurniture = furniturePlacements.find(
     ({ id }) => id === selectedFurnitureId
   );
-  const selectedFurnitureDefinition = document?.furnitureDefinitions?.find(
+  const selectedFurnitureDefinition = activePlan?.furnitureDefinitions?.find(
     ({ id }) => id === selectedFurniture?.definitionId
   );
   const selectedLibraryDefinition = library.furnitureDefinitions.find(
@@ -142,7 +146,7 @@ export function App() {
   const selectedFixture = fixturePlacements.find(
     ({ id }) => id === selectedFixtureId
   );
-  const selectedFixtureDefinition = document?.fixtureDefinitions?.find(
+  const selectedFixtureDefinition = activePlan?.fixtureDefinitions?.find(
     ({ id }) => id === selectedFixture?.definitionId
   );
   const selectedFixtureLibraryDefinition = library.fixtureDefinitions.find(
@@ -164,13 +168,24 @@ export function App() {
   async function navigateHistory(direction: "undo" | "redo"): Promise<void> {
     const restored = await autosavedProject.navigateHistory(direction);
     if (restored) {
-      setSelectedWallId(undefined);
-      setSelectedRoomLabelId(undefined);
-      setSelectedOpeningId(undefined);
-      setSelectedFurnitureId(undefined);
-      setSelectedFixtureId(undefined);
+      clearPlanSelection();
       setOperationError("");
     }
+  }
+
+  function clearPlanSelection(): void {
+    setSelectedWallId(undefined);
+    setSelectedRoomLabelId(undefined);
+    setSelectedOpeningId(undefined);
+    setSelectedFurnitureId(undefined);
+    setSelectedFixtureId(undefined);
+    setOpeningConflict(undefined);
+    setPlacingItem(undefined);
+    setMode("select");
+  }
+
+  async function changeActivePlan(next: ProjectWorkspace): Promise<void> {
+    if (await commit(next)) clearPlanSelection();
   }
 
   function clientPoint(svg: SVGSVGElement, clientX: number, clientY: number): PointMm {
@@ -242,7 +257,7 @@ export function App() {
     }
 
     const fixture = [...fixturePlacements].reverse().find((placement) => {
-      const definition = document?.fixtureDefinitions?.find(
+      const definition = activePlan?.fixtureDefinitions?.find(
         ({ id }) => id === placement.definitionId
       );
       return definition
@@ -264,7 +279,7 @@ export function App() {
     }
 
     const furniture = [...furniturePlacements].reverse().find((placement) => {
-      const definition = document?.furnitureDefinitions?.find(
+      const definition = activePlan?.furnitureDefinitions?.find(
         ({ id }) => id === placement.definitionId
       );
       return definition
@@ -597,7 +612,7 @@ export function App() {
     }
   }
 
-  if (!workspace || !document || !activeLevel) {
+  if (!workspace || !document || !activePlan || !activeLevel) {
     return (
       <main className="welcome-shell">
         <section className="welcome-card" aria-labelledby="welcome-title">
@@ -657,7 +672,9 @@ export function App() {
     <main className="workspace-shell">
       <header className="workspace-header">
         <div>
-          <p className="eyebrow">Existing State</p>
+          <p className="eyebrow">
+            {activeProposal ? "Design Proposal" : "Existing State"}
+          </p>
           <h1>{document.name}</h1>
         </div>
         <div className="header-actions">
@@ -708,6 +725,95 @@ export function App() {
             <span>Rename project</span>
             <input disabled={isSaving} value={document.name} onChange={renameProject} />
           </label>
+          <section className="proposal-manager" aria-labelledby="proposal-title">
+            <div className="proposal-heading">
+              <h2 id="proposal-title">Plans</h2>
+              <span>{document.designProposals?.length ?? 0} proposals</span>
+            </div>
+            <button
+              type="button"
+              className={activeProposal ? "proposal-option" : "proposal-option active"}
+              disabled={isSaving}
+              onClick={() => void changeActivePlan(workspace.selectExistingState())}
+            >
+              <strong>Existing State</strong>
+              <small>Revision {document.existingStateRevision ?? 0}</small>
+            </button>
+            {(document.designProposals ?? []).map((proposal) => (
+              <button
+                type="button"
+                key={proposal.id}
+                className={activeProposal?.id === proposal.id
+                  ? "proposal-option active"
+                  : "proposal-option"}
+                disabled={isSaving}
+                onClick={() =>
+                  void changeActivePlan(workspace.selectDesignProposal(proposal.id))}
+              >
+                <strong>{proposal.name}</strong>
+                <small>From revision {proposal.sourceRevision}</small>
+              </button>
+            ))}
+            <div className="proposal-create">
+              <input
+                aria-label="New Design Proposal name"
+                value={proposalName}
+                disabled={isSaving}
+                placeholder="Proposal name"
+                onChange={(event) => setProposalName(event.target.value)}
+              />
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={isSaving || !proposalName.trim()}
+                onClick={() => {
+                  void changeActivePlan(
+                    workspace.createDesignProposal(proposalName)
+                  ).then(() => setProposalName(""));
+                }}
+              >
+                Create from Existing State
+              </button>
+            </div>
+            {activeProposal ? (
+              <div className="active-proposal-actions">
+                <label className="field">
+                  <span>Rename Design Proposal</span>
+                  <input
+                    aria-label="Rename Design Proposal"
+                    disabled={isSaving}
+                    value={activeProposal.name}
+                    onChange={(event) =>
+                      void commit(workspace.renameDesignProposal(
+                        activeProposal.id,
+                        event.target.value
+                      ))}
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={isSaving}
+                  onClick={() =>
+                    void changeActivePlan(
+                      workspace.deleteDesignProposal(activeProposal.id)
+                    )}
+                >
+                  Delete Design Proposal
+                </button>
+              </div>
+            ) : null}
+            {proposalStaleness?.stale ? (
+              <p className="proposal-stale" role="status">
+                This proposal is stale. It was cloned from Existing State
+                revision {proposalStaleness.sourceRevision} on{" "}
+                {new Date(proposalStaleness.sourceRevisedAt).toLocaleString()}.
+                Existing State is now revision {proposalStaleness.currentRevision},
+                revised{" "}
+                {new Date(proposalStaleness.currentRevisedAt).toLocaleString()}.
+              </p>
+            ) : null}
+          </section>
           <div className="level-card">
             <span className="level-index">01</span>
             <div>
@@ -827,7 +933,7 @@ export function App() {
               }).join(" ")}
             />
             {furniturePlacements.map((placement) => {
-              const definition = document.furnitureDefinitions?.find(
+              const definition = activePlan.furnitureDefinitions?.find(
                 ({ id }) => id === placement.definitionId
               );
               if (!definition) return null;
@@ -844,7 +950,7 @@ export function App() {
               );
             })}
             {fixturePlacements.map((placement) => {
-              const definition = document.fixtureDefinitions?.find(
+              const definition = activePlan.fixtureDefinitions?.find(
                 ({ id }) => id === placement.definitionId
               );
               if (!definition) return null;

@@ -52,11 +52,85 @@
         "$ref": "#/$defs/level"
       }
     },
+    "existingStateRevision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "existingStateRevisedAt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "activePlan": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind"],
+          "properties": {
+            "kind": { "const": "existing-state" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "proposalId"],
+          "properties": {
+            "kind": { "const": "design-proposal" },
+            "proposalId": { "$ref": "#/$defs/designProposalId" }
+          }
+        }
+      ]
+    },
+    "designProposals": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/designProposal" }
+    },
     "extensions": {
       "$ref": "#/$defs/extensions"
     }
   },
   "$defs": {
+    "designProposalId": {
+      "type": "string",
+      "pattern": "^design_proposal_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "designProposal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "sourceRevision",
+        "sourceRevisedAt",
+        "activeLevelId",
+        "levels",
+        "extensions"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/designProposalId" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "sourceRevision": { "type": "integer", "minimum": 0 },
+        "sourceRevisedAt": { "type": "string", "minLength": 1 },
+        "activeLevelId": {
+          "type": "string",
+          "pattern": "^level_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "furnitureDefinitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/furnitureDefinition" }
+        },
+        "fixtureDefinitions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/fixtureDefinition" }
+        },
+        "levels": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/level" }
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
     "level": {
       "type": "object",
       "additionalProperties": false,

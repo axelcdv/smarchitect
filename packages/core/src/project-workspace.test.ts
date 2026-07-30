@@ -18,7 +18,10 @@ function deterministicIdFactory(): IdFactory {
     "room-label": 8,
     opening: 5,
     furniture_definition: 5,
-    furniture_placement: 6
+    furniture_placement: 6,
+    fixture_definition: 7,
+    fixture_placement: 8,
+    design_proposal: 12
   };
   return (kind) => {
     const value = next[kind]++;
@@ -73,9 +76,112 @@ function deterministicFixtureIdFactory(): () => string {
 }
 
 describe("Project Workspace acceptance seam", () => {
+  it("keeps several complete Design Proposals independent", () => {
+    const now = new Date("2026-07-31T10:00:00.000Z");
+    let workspace = ProjectWorkspace.create("Alternatives", {
+      idFactory: deterministicIdFactory(),
+      now: () => now
+    })
+      .addWall({
+        start: { x: 0, y: 0 },
+        end: { x: 4000, y: 0 }
+      })
+      .addRoomLabel({ name: "Living room", position: { x: 1000, y: 1000 } });
+    workspace = workspace
+      .placeFurniture({
+        id: "furniture_definition_00000000-0000-4000-8000-000000000010",
+        name: "Sofa",
+        widthMm: 2000,
+        depthMm: 900,
+        heightMm: 800,
+        extensions: {}
+      }, { position: { x: 500, y: 500 } })
+      .placeFixture({
+        id: "fixture_definition_00000000-0000-4000-8000-000000000011",
+        name: "Radiator",
+        widthMm: 1000,
+        depthMm: 150,
+        heightMm: 600,
+        extensions: {}
+      }, { position: { x: 2500, y: 300 } });
+
+    const existing = workspace.document;
+    const first = workspace.createDesignProposal("Open kitchen");
+    const firstId = first.activeDesignProposal!.id;
+    const second = first
+      .selectExistingState()
+      .createDesignProposal("Separate kitchen");
+    const secondId = second.activeDesignProposal!.id;
+
+    expect(second.document.designProposals).toHaveLength(2);
+    expect(second.activeDesignProposal).toMatchObject({
+      id: secondId,
+      name: "Separate kitchen",
+      sourceRevision: existing.existingStateRevision,
+      sourceRevisedAt: existing.existingStateRevisedAt,
+      levels: existing.levels,
+      furnitureDefinitions: existing.furnitureDefinitions,
+      fixtureDefinitions: existing.fixtureDefinitions
+    });
+    expect(second.document.designProposals![0]).toMatchObject({
+      id: firstId,
+      name: "Open kitchen",
+      levels: existing.levels
+    });
+
+    const editedFirst = second
+      .selectDesignProposal(firstId)
+      .addWall({
+        start: { x: 0, y: 1000 },
+        end: { x: 4000, y: 1000 }
+      })
+      .renameDesignProposal(firstId, "Kitchen opened");
+
+    expect(editedFirst.activeLevel.walls).toHaveLength(2);
+    expect(editedFirst.document.levels).toEqual(existing.levels);
+    expect(editedFirst.document.designProposals![1]!.levels)
+      .toEqual(existing.levels);
+    expect(editedFirst.activeDesignProposal?.name).toBe("Kitchen opened");
+
+    const deleted = editedFirst.deleteDesignProposal(firstId);
+    expect(deleted.activePlanSelection).toEqual({ kind: "existing-state" });
+    expect(deleted.document.designProposals?.map(({ id }) => id))
+      .toEqual([secondId]);
+  });
+
+  it("marks proposals stale after Existing State corrections", () => {
+    let currentTime = new Date("2026-07-31T10:00:00.000Z");
+    const workspace = ProjectWorkspace.create("Staleness", {
+      idFactory: deterministicIdFactory(),
+      now: () => currentTime
+    }).addWall({
+      start: { x: 0, y: 0 },
+      end: { x: 3000, y: 0 }
+    });
+    const proposal = workspace.createDesignProposal("Before correction");
+    const proposalId = proposal.activeDesignProposal!.id;
+    const proposalLevels = proposal.activeDesignProposal!.levels;
+
+    currentTime = new Date("2026-08-01T11:30:00.000Z");
+    const corrected = proposal
+      .selectExistingState()
+      .updateWall(workspace.activeLevel.walls[0]!.id, { lengthMm: 4200 })
+      .selectDesignProposal(proposalId);
+
+    expect(corrected.activeDesignProposal?.levels).toEqual(proposalLevels);
+    expect(corrected.activeProposalStaleness).toEqual({
+      stale: true,
+      sourceRevision: workspace.document.existingStateRevision,
+      sourceRevisedAt: "2026-07-31T10:00:00.000Z",
+      currentRevision: corrected.document.existingStateRevision,
+      currentRevisedAt: "2026-08-01T11:30:00.000Z"
+    });
+  });
+
   it("creates a valid metric project with one active Level", () => {
     const document = createProjectDocument("My renovation", {
-      idFactory: deterministicIdFactory()
+      idFactory: deterministicIdFactory(),
+      now: () => new Date("2026-07-31T10:00:00.000Z")
     });
 
     expect(document).toEqual({
@@ -86,6 +192,10 @@ describe("Project Workspace acceptance seam", () => {
       activeLevelId: "level_00000000-0000-4000-8000-000000000002",
       furnitureDefinitions: [],
       fixtureDefinitions: [],
+      existingStateRevision: 0,
+      existingStateRevisedAt: "2026-07-31T10:00:00.000Z",
+      activePlan: { kind: "existing-state" },
+      designProposals: [],
       levels: [
         {
           id: "level_00000000-0000-4000-8000-000000000002",

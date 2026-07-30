@@ -14,6 +14,7 @@ import {
   CURRENT_SCHEMA_VERSION,
   type Diagnostic,
   type ParseProjectDocumentResult,
+  type PlanSnapshot,
   type ProjectDocument
 } from "./types.js";
 
@@ -74,7 +75,7 @@ function schemaDiagnostics(): Diagnostic[] {
   }));
 }
 
-function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
+function planSemanticDiagnostics(document: PlanSnapshot): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const levelIds = new Set<string>();
   const definitionIds = new Set<string>();
@@ -236,6 +237,41 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
       severity: "error",
       path: "/activeLevelId",
       message: `Active Level "${document.activeLevelId}" does not exist in levels.`
+    });
+  }
+
+  return diagnostics;
+}
+
+function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
+  const diagnostics = planSemanticDiagnostics(document);
+  const proposalIds = new Set<string>();
+
+  for (const [index, proposal] of (document.designProposals ?? []).entries()) {
+    if (proposalIds.has(proposal.id)) {
+      diagnostics.push({
+        code: "design-proposal.id.duplicate",
+        severity: "error",
+        path: `/designProposals/${index}/id`,
+        message: `Design Proposal ID "${proposal.id}" must be unique within the Project Document.`
+      });
+    }
+    proposalIds.add(proposal.id);
+    diagnostics.push(...planSemanticDiagnostics(proposal).map((diagnostic) => ({
+      ...diagnostic,
+      path: `/designProposals/${index}${diagnostic.path}`
+    })));
+  }
+
+  if (
+    document.activePlan?.kind === "design-proposal"
+    && !proposalIds.has(document.activePlan.proposalId)
+  ) {
+    diagnostics.push({
+      code: "active-plan.proposal.missing",
+      severity: "error",
+      path: "/activePlan/proposalId",
+      message: `Active Design Proposal "${document.activePlan.proposalId}" does not exist.`
     });
   }
 
