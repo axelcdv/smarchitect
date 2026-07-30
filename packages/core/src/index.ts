@@ -23,6 +23,11 @@ export {
   wallAngleDeg
 } from "./wall-geometry.js";
 export {
+  deriveRooms,
+  findRoomContainingPoint,
+  pointInRoom
+} from "./room-geometry.js";
+export {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
   type Diagnostic,
@@ -34,6 +39,10 @@ export {
   type MeasurementUnits,
   type ParseProjectDocumentResult,
   type ProjectDocument,
+  type Room,
+  type RoomLabel,
+  type RoomLabelInput,
+  type RoomLabelUpdate,
   type SchemaVersion,
   type PointMm,
   type StraightWallPath,

@@ -4,25 +4,21 @@ import {
   ProjectWorkspace,
   createProjectDocument,
   parseProjectDocument,
+  type EntityKind,
+  type IdFactory,
   validateProjectDocument
 } from "./index.js";
 
-function deterministicIdFactory(): () => string {
-  const ids = [
-    "project_00000000-0000-4000-8000-000000000001",
-    "level_00000000-0000-4000-8000-000000000002",
-    "wall_00000000-0000-4000-8000-000000000003",
-    "wall_00000000-0000-4000-8000-000000000004"
-  ];
-
-  return () => {
-    const id = ids.shift();
-
-    if (!id) {
-      throw new Error("The test exhausted its deterministic IDs");
-    }
-
-    return id;
+function deterministicIdFactory(): IdFactory {
+  const next: Record<EntityKind, number> = {
+    project: 1,
+    level: 2,
+    wall: 3,
+    "room-label": 8
+  };
+  return (kind) => {
+    const value = next[kind]++;
+    return `${kind}_00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
   };
 }
 
@@ -45,6 +41,7 @@ describe("Project Workspace acceptance seam", () => {
           baseElevationMm: 0,
           defaultWallHeightMm: 2500,
           walls: [],
+          roomLabels: [],
           extensions: {}
         }
       ],
@@ -121,6 +118,90 @@ describe("Project Workspace acceptance seam", () => {
     expect(imported.document).toEqual(renamedWorkspace.document);
     expect(imported.activeLevel.name).toBe("Ground floor");
     expect(imported.diagnostics).toEqual([]);
+  });
+
+  it("adds, names, moves, edits, and deletes durable Room Labels", () => {
+    let workspace = ProjectWorkspace.create("Labelled home", {
+      idFactory: deterministicIdFactory()
+    });
+    for (const [start, end] of [
+      [[0, 0], [4000, 0]],
+      [[4000, 0], [4000, 3000]],
+      [[4000, 3000], [0, 3000]],
+      [[0, 3000], [0, 0]]
+    ] as const) {
+      workspace = workspace.addWall({
+        start: { x: start[0], y: start[1] },
+        end: { x: end[0], y: end[1] }
+      });
+    }
+    const labelled = workspace.addRoomLabel({
+      name: "Kitchen",
+      position: { x: 1000, y: 1500 }
+    });
+    const labelId = labelled.activeLevel.roomLabels[0]!.id;
+    const edited = labelled.updateRoomLabel(labelId, { name: "Dining" });
+    const moved = edited.moveRoomLabel(labelId, { x: 2000, y: 0 });
+
+    expect(moved.activeLevel.roomLabels[0]).toMatchObject({
+      name: "Dining",
+      position: { x: 3000, y: 1500 }
+    });
+    expect(moved.rooms[0]!.labelIds).toEqual([labelId]);
+    expect(moved.exportYaml()).not.toContain("boundary:");
+    expect(moved.exportYaml()).not.toContain("areaMm2:");
+    expect(ProjectWorkspace.importYaml(moved.exportYaml()).document)
+      .toEqual(moved.document);
+    expect(moved.deleteRoomLabel(labelId).activeLevel.roomLabels).toEqual([]);
+  });
+
+  it("keeps labels through splits and diagnoses outside and merged labels", () => {
+    let workspace = ProjectWorkspace.create("Changing rooms", {
+      idFactory: deterministicIdFactory()
+    });
+    for (const [start, end] of [
+      [[0, 0], [4000, 0]],
+      [[4000, 0], [4000, 3000]],
+      [[4000, 3000], [0, 3000]],
+      [[0, 3000], [0, 0]]
+    ] as const) {
+      workspace = workspace.addWall({
+        start: { x: start[0], y: start[1] },
+        end: { x: end[0], y: end[1] }
+      });
+    }
+    const first = workspace.addRoomLabel({
+      name: "Kitchen",
+      position: { x: 1000, y: 1500 }
+    });
+    const firstLabelId = first.activeLevel.roomLabels[0]!.id;
+    const split = first.addWall({
+      start: { x: 2000, y: 0 },
+      end: { x: 2000, y: 3000 }
+    });
+
+    expect(split.rooms).toHaveLength(2);
+    expect(split.rooms.find(({ labelIds }) => labelIds.includes(firstLabelId)))
+      .toMatchObject({ labelIds: [firstLabelId] });
+
+    const withSecond = split.addRoomLabel({
+      name: "Living room",
+      position: { x: 3000, y: 1500 }
+    });
+    const dividerId = withSecond.activeLevel.walls.at(-1)!.id;
+    const merged = withSecond.deleteWall(dividerId);
+    expect(merged.document.levels[0]!.roomLabels).toHaveLength(2);
+    expect(merged.diagnostics).toContainEqual(expect.objectContaining({
+      code: "room-label.merge-conflict",
+      severity: "warning"
+    }));
+
+    const outside = merged.moveRoomLabel(firstLabelId, { x: -2000, y: 0 });
+    expect(outside.diagnostics).toContainEqual(expect.objectContaining({
+      code: "room-label.outside-room",
+      severity: "warning"
+    }));
+    expect(outside.document.levels[0]!.roomLabels).toHaveLength(2);
   });
 
   it("rejects unsupported schema versions with a machine-readable diagnostic", () => {

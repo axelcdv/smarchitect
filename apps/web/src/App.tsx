@@ -10,6 +10,7 @@ import {
   snapWallDelta,
   wallAngleDeg,
   type PointMm,
+  type RoomLabel,
   type Wall
 } from "@smarchitect/core";
 import {
@@ -30,6 +31,7 @@ import "./styles.css";
 type WallEditField =
   | "startX" | "startY" | "endX" | "endY"
   | "lengthMm" | "angleDeg" | "thicknessMm" | "heightMm";
+type RoomLabelEditField = "name" | "x" | "y";
 
 function wallPolygonPoints(wall: Wall): string {
   return deriveWallFaces(wall)
@@ -63,12 +65,15 @@ export function App() {
   const [yaml, setYaml] = useState("");
   const [error, setError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
-  const [mode, setMode] = useState<"draw" | "select">("draw");
+  const [selectedRoomLabelId, setSelectedRoomLabelId] = useState<string>();
+  const [mode, setMode] = useState<"draw" | "select" | "label">("draw");
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
     | { kind: "draw"; start: PointMm }
     | { kind: "move"; wallId: string; start: PointMm }
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
+    | { kind: "add-label" }
+    | { kind: "move-label"; labelId: string; start: PointMm }
   >();
   const importInput = useRef<HTMLInputElement>(null);
   const repository = useRef(
@@ -80,7 +85,10 @@ export function App() {
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
+  const roomLabels = activeLevel?.roomLabels ?? [];
+  const rooms = workspace?.rooms ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
+  const selectedRoomLabel = roomLabels.find(({ id }) => id === selectedRoomLabelId);
 
   function refreshHistoryControls(project: AutosavedProject): void {
     setHistoryControls({
@@ -163,6 +171,7 @@ export function App() {
     );
     if (restored) {
       setSelectedWallId(undefined);
+      setSelectedRoomLabelId(undefined);
       refreshHistoryControls(project);
     }
   }
@@ -187,6 +196,27 @@ export function App() {
       setGesture({ kind: "draw", start: snapPoint(point, walls, snapTolerance) });
       return;
     }
+    if (mode === "label") {
+      setGesture({ kind: "add-label" });
+      return;
+    }
+
+    const label = roomLabels
+      .map((candidate) => ({
+        candidate,
+        distance: Math.hypot(
+          candidate.position.x - point.x,
+          candidate.position.y - point.y
+        )
+      }))
+      .filter(({ distance }) => distance <= view.width / 80)
+      .sort((left, right) => left.distance - right.distance)[0]?.candidate;
+    if (label) {
+      setSelectedRoomLabelId(label.id);
+      setSelectedWallId(undefined);
+      setGesture({ kind: "move-label", labelId: label.id, start: point });
+      return;
+    }
 
     const endpointHit = selectedWall
       ? findWallEndpointAtPoint(point, [selectedWall], view.width / 160)
@@ -202,6 +232,7 @@ export function App() {
 
     const wall = findWallAtPoint(point, walls, view.width / 400);
     setSelectedWallId(wall?.id);
+    setSelectedRoomLabelId(undefined);
     if (wall) {
       setGesture({ kind: "move", wallId: wall.id, start: point });
     }
@@ -210,7 +241,18 @@ export function App() {
   async function finishPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
     if (!workspace || !gesture || transitionPending.current) return;
     const point = eventPoint(event);
-    if (gesture.kind === "draw") {
+    if (gesture.kind === "add-label") {
+      const next = workspace.addRoomLabel({
+        name: `Room ${roomLabels.length + 1}`,
+        position: point
+      });
+      const durable = await commit(next);
+      if (durable) {
+        setSelectedRoomLabelId(durable.activeLevel.roomLabels.at(-1)?.id);
+        setSelectedWallId(undefined);
+        setMode("select");
+      }
+    } else if (gesture.kind === "draw") {
       const exactSnap = snapPoint(point, walls, view.width / 80);
       const snapped = exactSnap.x !== point.x || exactSnap.y !== point.y
         ? exactSnap
@@ -232,7 +274,7 @@ export function App() {
         }, walls.filter(({ id }) => id !== wall.id), view.width / 80);
         await commit(workspace.moveWall(gesture.wallId, delta));
       }
-    } else {
+    } else if (gesture.kind === "endpoint") {
       const wall = walls.find(({ id }) => id === gesture.wallId);
       if (wall) {
         const other = gesture.endpoint === "start" ? wall.path.end : wall.path.start;
@@ -243,6 +285,11 @@ export function App() {
           [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
         }));
       }
+    } else {
+      await commit(workspace.moveRoomLabel(gesture.labelId, {
+        x: point.x - gesture.start.x,
+        y: point.y - gesture.start.y
+      }));
     }
     setGesture(undefined);
   }
@@ -257,6 +304,25 @@ export function App() {
       : field === "endY" ? { end: { ...selectedWall.path.end, y: Math.round(numeric) } }
       : { [field]: field === "angleDeg" ? numeric : Math.round(numeric) };
     await commit(workspace.updateWall(selectedWall.id, update));
+  }
+
+  async function editSelectedRoomLabel(
+    field: RoomLabelEditField,
+    value: string
+  ): Promise<void> {
+    if (!workspace || !selectedRoomLabel || !value) return;
+    if (field === "name") {
+      await commit(workspace.updateRoomLabel(selectedRoomLabel.id, { name: value }));
+      return;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    await commit(workspace.updateRoomLabel(selectedRoomLabel.id, {
+      position: {
+        ...selectedRoomLabel.position,
+        [field]: Math.round(numeric)
+      }
+    }));
   }
 
   async function createProject(): Promise<void> {
@@ -458,7 +524,12 @@ export function App() {
           <div className="plan-toolbar">
             <button disabled={isSaving} className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
             <button disabled={isSaving} className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
-            <span>{walls.length} {walls.length === 1 ? "wall" : "walls"}</span>
+            <button disabled={isSaving} className={mode === "label" ? "tool-active" : ""} type="button" onClick={() => setMode("label")}>Add room label</button>
+            <span>
+              <span>{walls.length} {walls.length === 1 ? "wall" : "walls"}</span>
+              {" · "}
+              <span>{rooms.length} {rooms.length === 1 ? "room" : "rooms"}</span>
+            </span>
             <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
             <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
             <button type="button" aria-label="Pan left" onClick={() => setView((current) => ({ ...current, x: current.x - current.width / 10 }))}>←</button>
@@ -490,6 +561,17 @@ export function App() {
               </pattern>
             </defs>
             <rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#grid)" />
+            {rooms.map((room) => (
+              <g key={room.id} className="derived-room">
+                <polygon points={room.boundary.map(({ x, y }) => `${x},${-y}`).join(" ")} />
+                <text
+                  x={room.boundary.reduce((sum, { x }) => sum + x, 0) / room.boundary.length}
+                  y={-room.boundary.reduce((sum, { y }) => sum + y, 0) / room.boundary.length}
+                >
+                  {(room.areaMm2 / 1_000_000).toFixed(2)} m² · {room.dimensionsMm.width} × {room.dimensionsMm.depth} mm
+                </text>
+              </g>
+            ))}
             <path
               className="wall-surface"
               d={walls.map((wall) => {
@@ -517,6 +599,17 @@ export function App() {
                 r={view.width / 160}
               />
             )) : null}
+            {roomLabels.map((label: RoomLabel) => (
+              <g
+                className={label.id === selectedRoomLabelId ? "room-label selected-room-label" : "room-label"}
+                key={label.id}
+              >
+                <circle cx={label.position.x} cy={-label.position.y} r={view.width / 100} />
+                <text x={label.position.x} y={-label.position.y - view.width / 70}>
+                  {label.name}
+                </text>
+              </g>
+            ))}
           </svg>
           {selectedWall ? (
             <div className="wall-properties" aria-label="Selected wall properties">
@@ -539,6 +632,53 @@ export function App() {
               }}>Delete wall</button>
             </div>
           ) : null}
+          {selectedRoomLabel ? (
+            <div className="room-label-properties" aria-label="Selected Room Label properties">
+              <label>
+                <span>Room Label name</span>
+                <input
+                  disabled={isSaving}
+                  aria-label="Room Label name"
+                  value={selectedRoomLabel.name}
+                  onChange={(event) => void editSelectedRoomLabel("name", event.target.value)}
+                />
+              </label>
+              {([
+                ["x", "Room Label X (mm)", selectedRoomLabel.position.x],
+                ["y", "Room Label Y (mm)", selectedRoomLabel.position.y]
+              ] satisfies [RoomLabelEditField, string, number][]).map(([field, label, value]) => (
+                <label key={field}>
+                  <span>{label}</span>
+                  <input
+                    disabled={isSaving}
+                    aria-label={label}
+                    type="number"
+                    value={value}
+                    onChange={(event) => void editSelectedRoomLabel(field, event.target.value)}
+                  />
+                </label>
+              ))}
+              <button
+                type="button"
+                className="danger-button"
+                disabled={isSaving}
+                onClick={async () => {
+                  if (await commit(workspace.deleteRoomLabel(selectedRoomLabel.id))) {
+                    setSelectedRoomLabelId(undefined);
+                  }
+                }}
+              >
+                Delete room label
+              </button>
+            </div>
+          ) : null}
+          {diagnostics.filter(({ code }) => code.startsWith("room-label.")).map(
+            ({ code, message }, index) => (
+              <p className="room-diagnostic" role="alert" key={`${code}:${index}`}>
+                {message}
+              </p>
+            )
+          )}
         </section>
 
         <section className="yaml-panel" aria-labelledby="yaml-title">

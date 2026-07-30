@@ -11,6 +11,7 @@ export interface Level {
   baseElevationMm: number;
   defaultWallHeightMm: number;
   walls: Wall[];
+  roomLabels: RoomLabel[];
   extensions: ExtensionData;
 }
 
@@ -54,6 +55,35 @@ export interface WallJunction {
   wallIds: string[];
 }
 
+export interface RoomLabel {
+  id: string;
+  name: string;
+  position: PointMm;
+  extensions: ExtensionData;
+}
+
+export interface RoomLabelInput {
+  name: string;
+  position: PointMm;
+}
+
+export interface RoomLabelUpdate {
+  name?: string;
+  position?: PointMm;
+}
+
+export interface Room {
+  id: string;
+  boundary: PointMm[];
+  areaMm2: number;
+  dimensionsMm: {
+    width: number;
+    depth: number;
+  };
+  wallIds: string[];
+  labelIds: string[];
+}
+
 export interface ProjectDocument {
   schemaVersion: SchemaVersion;
   id: string;
@@ -78,7 +108,7 @@ export interface ParseProjectDocumentResult {
   diagnostics: Diagnostic[];
 }
 
-export type EntityKind = "project" | "level" | "wall";
+export type EntityKind = "project" | "level" | "wall" | "room-label";
 export type IdFactory = (kind: EntityKind) => string;
 
 export interface CreateProjectDocumentOptions {

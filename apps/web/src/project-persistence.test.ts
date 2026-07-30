@@ -91,6 +91,33 @@ describe("autosaved project recovery", () => {
     }
   });
 
+  it("restores Room Label edits and their Undo/Redo history", async () => {
+    const repository = new SerializedProjectRepository(
+      new IndexedDbProjectRepository()
+    );
+    let project = await AutosavedProject.create(
+      ProjectWorkspace.create("Persistent labels"),
+      repository
+    );
+    await project.accept(project.workspace.addRoomLabel({
+      name: "Kitchen",
+      position: { x: 1000, y: 1200 }
+    }));
+    const addedYaml = project.workspace.exportYaml();
+    const labelId = project.workspace.activeLevel.roomLabels[0]!.id;
+    await project.accept(project.workspace.updateRoomLabel(labelId, {
+      name: "Dining room",
+      position: { x: 1800, y: 1400 }
+    }));
+    const editedYaml = project.workspace.exportYaml();
+
+    project = (await AutosavedProject.restore(repository))!;
+    expect(project.workspace.exportYaml()).toBe(editedYaml);
+    expect((await project.undo()).exportYaml()).toBe(addedYaml);
+    project = (await AutosavedProject.restore(repository))!;
+    expect((await project.redo()).exportYaml()).toBe(editedYaml);
+  });
+
   it("keeps state unchanged and surfaces a persistence failure", async () => {
     const storage = new MemoryProjectRepository();
     let rejectWrites = false;
