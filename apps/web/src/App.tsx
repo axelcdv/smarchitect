@@ -17,18 +17,13 @@ import {
   type Wall
 } from "@smarchitect/core";
 import {
-  useEffect,
   useRef,
   useState,
   type ChangeEvent,
   type PointerEvent,
   type WheelEvent
 } from "react";
-import {
-  AutosavedProject,
-  IndexedDbProjectRepository,
-  SerializedProjectRepository
-} from "./project-persistence.js";
+import { useAutosavedProject } from "./use-autosaved-project.js";
 import { FurniturePlacementInspector } from "./FurniturePlacementInspector.js";
 import { ItemLibrary } from "./ItemLibrary.js";
 import { useFurnitureLibrary } from "./use-furniture-library.js";
@@ -61,18 +56,11 @@ function downloadYaml(source: string, projectName: string): void {
 
 export function App() {
   const [draftName, setDraftName] = useState("");
-  const [workspace, setWorkspace] = useState<ProjectWorkspace>();
-  const [historyControls, setHistoryControls] = useState({
-    canUndo: false,
-    canRedo: false
-  });
-  const [isSaving, setIsSaving] = useState(false);
-  const [yaml, setYaml] = useState("");
-  const [error, setError] = useState("");
+  const [operationError, setOperationError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
   const [selectedFurnitureId, setSelectedFurnitureId] = useState<string>();
   const [placingDefinitionId, setPlacingDefinitionId] = useState<string>();
-  const library = useFurnitureLibrary(setError);
+  const library = useFurnitureLibrary(setOperationError);
   const [mode, setMode] = useState<"draw" | "select" | "placeFurniture">("draw");
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
@@ -82,11 +70,17 @@ export function App() {
     | { kind: "furnitureMove"; placementId: string; start: PointMm }
   >();
   const importInput = useRef<HTMLInputElement>(null);
-  const repository = useRef(
-    new SerializedProjectRepository(new IndexedDbProjectRepository())
-  );
-  const autosavedProject = useRef<AutosavedProject | undefined>(undefined);
-  const transitionPending = useRef(false);
+  const autosavedProject = useAutosavedProject();
+  const {
+    workspace,
+    yaml,
+    persistenceError,
+    isSaving,
+    canUndo,
+    canRedo,
+    isTransitionPending
+  } = autosavedProject;
+  const error = persistenceError || operationError;
   const document = workspace?.document;
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
@@ -103,89 +97,24 @@ export function App() {
     ({ id }) => id === selectedFurnitureDefinition?.id
   );
 
-  function refreshHistoryControls(project: AutosavedProject): void {
-    setHistoryControls({
-      canUndo: project.canUndo,
-      canRedo: project.canRedo
-    });
-  }
-
-  useEffect(() => {
-    let active = true;
-    void AutosavedProject.restore(repository.current)
-      .then((restored) => {
-        if (!active || !restored || autosavedProject.current) return;
-        autosavedProject.current = restored;
-        setWorkspace(restored.workspace);
-        setYaml(restored.workspace.exportYaml());
-        setDraftName(restored.workspace.document.name);
-        refreshHistoryControls(restored);
-      })
-      .catch(() => {
-        if (active && !autosavedProject.current) {
-          setError("Local recovery is unavailable. New edits may not survive reload.");
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  function show(next: ProjectWorkspace): void {
-    setWorkspace(next);
-    setYaml(next.exportYaml());
-    setError("");
-  }
-
-  async function persist(
-    transition: () => Promise<ProjectWorkspace>
-  ): Promise<ProjectWorkspace | undefined> {
-    if (transitionPending.current) return undefined;
-    transitionPending.current = true;
-    setIsSaving(true);
-    try {
-      const durable = await transition();
-      show(durable);
-      return durable;
-    } catch (cause) {
-      setError(cause instanceof Error
-        ? `Autosave failed: ${cause.message}`
-        : "Autosave failed. The edit was not accepted.");
-      return undefined;
-    } finally {
-      transitionPending.current = false;
-      setIsSaving(false);
-    }
-  }
-
   async function commit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined> {
-    const project = autosavedProject.current;
-    if (!project) return undefined;
-    const durable = await persist(() => project.accept(next));
-    if (durable) refreshHistoryControls(project);
+    const durable = await autosavedProject.commit(next);
+    if (durable) setOperationError("");
     return durable;
   }
 
   async function startAutosave(next: ProjectWorkspace): Promise<boolean> {
-    const durable = await persist(async () => {
-      const project = await AutosavedProject.create(next, repository.current);
-      autosavedProject.current = project;
-      refreshHistoryControls(project);
-      return project.workspace;
-    });
-    return durable !== undefined;
+    const started = await autosavedProject.startAutosave(next);
+    if (started) setOperationError("");
+    return started;
   }
 
   async function navigateHistory(direction: "undo" | "redo"): Promise<void> {
-    const project = autosavedProject.current;
-    if (!project) return;
-    const restored = await persist(
-      () => direction === "undo" ? project.undo() : project.redo()
-    );
+    const restored = await autosavedProject.navigateHistory(direction);
     if (restored) {
       setSelectedWallId(undefined);
       setSelectedFurnitureId(undefined);
-      refreshHistoryControls(project);
+      setOperationError("");
     }
   }
 
@@ -202,7 +131,7 @@ export function App() {
   }
 
   async function beginPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
-    if (transitionPending.current) return;
+    if (isTransitionPending()) return;
     const point = eventPoint(event);
     const snapTolerance = view.width / 80;
     if (mode === "placeFurniture") {
@@ -268,7 +197,7 @@ export function App() {
   }
 
   async function finishPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
-    if (!workspace || !gesture || transitionPending.current) return;
+    if (!workspace || !gesture || isTransitionPending()) return;
     const point = eventPoint(event);
     if (gesture.kind === "draw") {
       const exactSnap = snapPoint(point, walls, view.width / 80);
@@ -353,7 +282,9 @@ export function App() {
       const created = ProjectWorkspace.create(draftName);
       await startAutosave(created);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to create project.");
+      setOperationError(cause instanceof Error
+        ? cause.message
+        : "Unable to create project.");
     }
   }
 
@@ -366,7 +297,9 @@ export function App() {
       const renamedWorkspace = workspace.rename(event.target.value);
       await commit(renamedWorkspace);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to rename project.");
+      setOperationError(cause instanceof Error
+        ? cause.message
+        : "Unable to rename project.");
     }
   }
 
@@ -384,9 +317,11 @@ export function App() {
       }
     } catch (cause) {
       if (cause instanceof ProjectValidationError) {
-        setError(cause.diagnostics.map(({ message }) => message).join(" "));
+        setOperationError(cause.diagnostics.map(({ message }) => message).join(" "));
       } else {
-        setError(cause instanceof Error ? cause.message : "Unable to import project.");
+        setOperationError(cause instanceof Error
+          ? cause.message
+          : "Unable to import project.");
       }
     } finally {
       event.target.value = "";
@@ -460,7 +395,7 @@ export function App() {
           <button
             type="button"
             className="secondary-button"
-            disabled={isSaving || !historyControls.canUndo}
+            disabled={isSaving || !canUndo}
             onClick={() => void navigateHistory("undo")}
           >
             Undo
@@ -468,7 +403,7 @@ export function App() {
           <button
             type="button"
             className="secondary-button"
-            disabled={isSaving || !historyControls.canRedo}
+            disabled={isSaving || !canRedo}
             onClick={() => void navigateHistory("redo")}
           >
             Redo

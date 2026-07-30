@@ -2,6 +2,55 @@ import { describe, expect, it } from "vitest";
 import { ProjectHistory, ProjectWorkspace } from "./index.js";
 
 describe("Project transaction history", () => {
+  it("preserves authored YAML syntax and extensions across accepted edits and reloads", () => {
+    const authored = `# Homeowner context stays with the document
+name: Authored home
+schemaVersion: 1.0.0
+extensions:
+  https://example.com/smarchitect/notes:
+    reviewedBy: homeowner
+id: project_00000000-0000-4000-8000-000000000001
+units: metric
+levels:
+  - name: Ground floor # custom level ordering
+    id: level_00000000-0000-4000-8000-000000000002
+    walls:
+      - thicknessMm: 150 # measured on site
+        id: wall_00000000-0000-4000-8000-000000000003
+        path:
+          start: { x: 0, y: 0 }
+          kind: straight
+          end: { x: 3000, y: 0 }
+        extensions:
+          https://example.com/smarchitect/material:
+            finish: limewash
+        heightMm: 2500
+    baseElevationMm: 0
+    extensions: {}
+    defaultWallHeightMm: 2500
+activeLevelId: level_00000000-0000-4000-8000-000000000002
+`;
+    const history = ProjectHistory.create(ProjectWorkspace.importYaml(authored));
+    const wallId = history.workspace.activeLevel.walls[0]!.id;
+
+    history.transact((workspace) => workspace.updateWall(wallId, {
+      heightMm: 2800
+    }));
+    const edited = history.workspace.exportYaml();
+
+    expect(edited).toContain("# Homeowner context stays with the document");
+    expect(edited).toContain("name: Ground floor # custom level ordering");
+    expect(edited).toContain("thicknessMm: 150 # measured on site");
+    expect(edited.indexOf("name: Authored home"))
+      .toBeLessThan(edited.indexOf("schemaVersion: 1.0.0"));
+    expect(edited).toContain("finish: limewash");
+    expect(edited).toContain("heightMm: 2800");
+
+    const reloaded = ProjectHistory.restore(history.snapshot());
+    expect(reloaded.undo().exportYaml()).toBe(authored);
+    expect(reloaded.redo().exportYaml()).toBe(edited);
+  });
+
   it("undoes and redoes exact semantic and YAML states for Wall operations", () => {
     const initial = ProjectWorkspace.create("Recovery home");
     const history = ProjectHistory.create(initial);
