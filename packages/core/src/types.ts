@@ -110,6 +110,32 @@ export interface OpeningUpdate {
   operation?: FixedOperation | HingedOperation | SlidingOperation;
 }
 
+export type OpeningConflictResolution = "fit" | "delete";
+
+export interface LineSegmentMm {
+  start: PointMm;
+  end: PointMm;
+}
+
+export interface OpeningPlanGeometry {
+  start: PointMm;
+  end: PointMm;
+  operationKind: "passage" | FixedOperation["kind"] | HingedOperation["kind"] | SlidingOperation["kind"];
+  jambs: LineSegmentMm[];
+  panes: LineSegmentMm[];
+  slidingPanels: LineSegmentMm[];
+  hinge?: PointMm;
+  leafEnd?: PointMm;
+  swingArcStart?: PointMm;
+  swingClockwise?: boolean;
+  slideArrow?: {
+    tail: PointMm;
+    tip: PointMm;
+    firstWing: PointMm;
+    secondWing: PointMm;
+  };
+}
+
 export interface WallJunction {
   point: PointMm;
   wallIds: string[];

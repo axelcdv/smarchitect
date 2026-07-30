@@ -1,4 +1,4 @@
-import { stringify } from "yaml";
+import { parseDocument, stringify, type Document } from "yaml";
 import {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
@@ -7,6 +7,8 @@ import {
   type IdFactory,
   type Level,
   type OpeningInput,
+  type OpeningConflictResolution,
+  type Opening,
   type OpeningUpdate,
   type PointMm,
   type ProjectDocument,
@@ -18,6 +20,7 @@ import {
   validateProjectDocument
 } from "./validation.js";
 import { normalizeAngleDeg } from "./wall-geometry.js";
+import { wallPathLength } from "./opening-geometry.js";
 
 const DEFAULT_LEVEL_NAME = "Ground floor";
 const DEFAULT_WALL_HEIGHT_MM = 2500;
@@ -28,6 +31,102 @@ function defaultIdFactory(kind: EntityKind): string {
 
 function cloneProjectDocument(document: ProjectDocument): ProjectDocument {
   return structuredClone(document);
+}
+
+function valuesMatch(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function reconcileYamlNode(
+  yamlDocument: Document,
+  path: readonly (string | number)[],
+  previous: unknown,
+  next: unknown
+): void {
+  if (valuesMatch(previous, next)) return;
+  if (Array.isArray(previous) && Array.isArray(next)) {
+    if (previous.length === next.length) {
+      next.forEach((value, index) =>
+        reconcileYamlNode(yamlDocument, [...path, index], previous[index], value)
+      );
+      return;
+    }
+    if (
+      next.length === previous.length + 1
+      && valuesMatch(previous, next.slice(0, -1))
+    ) {
+      yamlDocument.setIn([...path, previous.length], next.at(-1));
+      return;
+    }
+    if (previous.length === next.length + 1) {
+      const removedIndex = previous.findIndex((_value, index) =>
+        valuesMatch(
+          [...previous.slice(0, index), ...previous.slice(index + 1)],
+          next
+        )
+      );
+      if (removedIndex >= 0) {
+        yamlDocument.deleteIn([...path, removedIndex]);
+        return;
+      }
+    }
+    yamlDocument.setIn(path, next);
+    return;
+  }
+  if (isRecord(previous) && isRecord(next)) {
+    for (const key of Object.keys(previous)) {
+      if (!(key in next)) yamlDocument.deleteIn([...path, key]);
+    }
+    for (const [key, value] of Object.entries(next)) {
+      if (!(key in previous)) yamlDocument.setIn([...path, key], value);
+      else reconcileYamlNode(yamlDocument, [...path, key], previous[key], value);
+    }
+    return;
+  }
+  yamlDocument.setIn(path, next);
+}
+
+function updateYamlSource(
+  source: string,
+  previous: ProjectDocument,
+  next: ProjectDocument
+): string {
+  const yamlDocument = parseDocument(source);
+  reconcileYamlNode(yamlDocument, [], previous, next);
+  return yamlDocument.toString({ lineWidth: 0 });
+}
+
+function openingFitsWall(opening: Opening, wall: Level["walls"][number]): boolean {
+  const bottom = opening.kind === "window" ? opening.sillHeightMm : 0;
+  return opening.positionMm + opening.widthMm <= wallPathLength(wall)
+    && bottom + opening.heightMm <= wall.heightMm;
+}
+
+function fitOpeningToWall(opening: Opening, wall: Level["walls"][number]): void {
+  opening.widthMm = Math.max(
+    1,
+    Math.min(opening.widthMm, Math.floor(wallPathLength(wall)))
+  );
+  opening.positionMm = Math.max(
+    0,
+    Math.min(
+      opening.positionMm,
+      Math.floor(wallPathLength(wall) - opening.widthMm)
+    )
+  );
+  if (opening.kind === "window") {
+    opening.sillHeightMm = Math.min(opening.sillHeightMm, wall.heightMm - 1);
+    opening.heightMm = Math.max(
+      1,
+      Math.min(opening.heightMm, wall.heightMm - opening.sillHeightMm)
+    );
+  } else {
+    opening.heightMm = Math.max(1, Math.min(opening.heightMm, wall.heightMm));
+  }
 }
 
 function assertNonEmptyName(name: string, subject: string): string {
@@ -86,10 +185,16 @@ export class ProjectValidationError extends Error {
 export class ProjectWorkspace {
   #document: ProjectDocument;
   #idFactory: IdFactory;
+  #source: string;
 
-  private constructor(document: ProjectDocument, idFactory: IdFactory = defaultIdFactory) {
+  private constructor(
+    document: ProjectDocument,
+    idFactory: IdFactory = defaultIdFactory,
+    source: string = stringify(document, { lineWidth: 0 })
+  ) {
     this.#document = cloneProjectDocument(document);
     this.#idFactory = idFactory;
+    this.#source = source;
   }
 
   static create(
@@ -109,7 +214,7 @@ export class ProjectWorkspace {
       throw new ProjectValidationError(result.diagnostics);
     }
 
-    return new ProjectWorkspace(result.document);
+    return new ProjectWorkspace(result.document, defaultIdFactory, source);
   }
 
   get document(): ProjectDocument {
@@ -141,7 +246,11 @@ export class ProjectWorkspace {
       throw new ProjectValidationError(diagnostics);
     }
 
-    return new ProjectWorkspace(candidate, this.#idFactory);
+    return new ProjectWorkspace(
+      candidate,
+      this.#idFactory,
+      updateYamlSource(this.#source, this.#document, candidate)
+    );
   }
 
   #replaceActiveLevel(update: (level: Level) => void): ProjectWorkspace {
@@ -157,7 +266,11 @@ export class ProjectWorkspace {
     if (diagnostics.length) {
       throw new ProjectValidationError(diagnostics);
     }
-    return new ProjectWorkspace(candidate, this.#idFactory);
+    return new ProjectWorkspace(
+      candidate,
+      this.#idFactory,
+      updateYamlSource(this.#source, this.#document, candidate)
+    );
   }
 
   addWall(input: WallInput): ProjectWorkspace {
@@ -176,6 +289,11 @@ export class ProjectWorkspace {
     return this.#replaceActiveLevel((level) => {
       const wall = level.walls.find((candidate) => candidate.id === id);
       if (!wall) throw new Error(`Wall "${id}" does not exist.`);
+      this.#applyWallUpdate(wall, update);
+    });
+  }
+
+  #applyWallUpdate(wall: Level["walls"][number], update: WallUpdate): void {
       const start = update.start ?? wall.path.start;
       const currentEnd = update.end ?? wall.path.end;
       const length = update.lengthMm ?? Math.hypot(
@@ -197,6 +315,33 @@ export class ProjectWorkspace {
       };
       wall.thicknessMm = update.thicknessMm ?? wall.thicknessMm;
       wall.heightMm = update.heightMm ?? wall.heightMm;
+  }
+
+  updateWallResolvingOpenings(
+    id: string,
+    update: WallUpdate,
+    resolution: OpeningConflictResolution
+  ): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const wall = level.walls.find((candidate) => candidate.id === id);
+      if (!wall) throw new Error(`Wall "${id}" does not exist.`);
+      this.#applyWallUpdate(wall, update);
+      const invalidIds = new Set(
+        level.openings
+          .filter((opening) =>
+            opening.hostWallId === id && !openingFitsWall(opening, wall)
+          )
+          .map(({ id: openingId }) => openingId)
+      );
+      if (resolution === "delete") {
+        level.openings = level.openings.filter(({ id: openingId }) =>
+          !invalidIds.has(openingId)
+        );
+      } else {
+        for (const opening of level.openings) {
+          if (invalidIds.has(opening.id)) fitOpeningToWall(opening, wall);
+        }
+      }
     });
   }
 
@@ -260,8 +405,6 @@ export class ProjectWorkspace {
   }
 
   exportYaml(): string {
-    return stringify(this.#document, {
-      lineWidth: 0
-    });
+    return this.#source;
   }
 }

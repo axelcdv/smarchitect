@@ -23,6 +23,12 @@ export {
   wallAngleDeg
 } from "./wall-geometry.js";
 export {
+  deriveOpeningPlanGeometry,
+  distanceAlongWallPath,
+  pointAlongWallPath,
+  wallPathLength
+} from "./opening-geometry.js";
+export {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
   type Diagnostic,
@@ -31,12 +37,15 @@ export {
   type ExtensionData,
   type IdFactory,
   type Level,
+  type LineSegmentMm,
   type MeasurementUnits,
   type DoorOpening,
   type FixedOperation,
   type HingedOperation,
   type Opening,
   type OpeningInput,
+  type OpeningConflictResolution,
+  type OpeningPlanGeometry,
   type OpeningUpdate,
   type PassageOpening,
   type PathDirection,

@@ -394,6 +394,15 @@ h2 {
   background: var(--paper);
 }
 
+.opening-conflict {
+  border: 1px solid #b6412f;
+  padding: 12px;
+}
+
+.opening-conflict button {
+  margin-right: 8px;
+}
+
 .wall-properties label,
 .opening-properties label {
   display: grid;

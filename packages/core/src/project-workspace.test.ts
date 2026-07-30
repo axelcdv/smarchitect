@@ -180,6 +180,74 @@ describe("Project Workspace acceptance seam", () => {
     expect(withPassage.deleteOpening(doorId).activeLevel.openings).toHaveLength(2);
   });
 
+  it("preserves authored YAML through every Opening mutation", () => {
+    const source = `# project comment
+name: Authored openings # name comment
+schemaVersion: 1.0.0
+units: metric
+id: project_00000000-0000-4000-8000-000000000001
+levels:
+  - name: Ground floor # level comment
+    id: level_00000000-0000-4000-8000-000000000002
+    openings:
+      - kind: passage # opening comment
+        id: opening_00000000-0000-4000-8000-000000000005
+        extensions:
+          example.test:opening:
+            authored: true # extension comment
+        hostWallId: wall_00000000-0000-4000-8000-000000000003
+        widthMm: 800
+        positionMm: 200
+        heightMm: 2100
+    walls:
+      - thicknessMm: 150
+        id: wall_00000000-0000-4000-8000-000000000003
+        path:
+          end: { y: 0, x: 4000 }
+          kind: straight
+          start: { y: 0, x: 0 }
+        heightMm: 2500
+        extensions: {}
+    extensions: {}
+    defaultWallHeightMm: 2500
+    baseElevationMm: 0
+activeLevelId: level_00000000-0000-4000-8000-000000000002
+extensions: {}
+`;
+    const imported = ProjectWorkspace.importYaml(source);
+    const firstId = imported.activeLevel.openings[0]!.id;
+    const added = imported.addOpening({
+      kind: "passage",
+      hostWallId: imported.activeLevel.walls[0]!.id,
+      positionMm: 1500,
+      widthMm: 700,
+      heightMm: 2000
+    });
+    const addedId = added.activeLevel.openings[1]!.id;
+    const updated = added.updateOpening(firstId, { widthMm: 900 });
+    const moved = updated.moveOpening(firstId, 100);
+    const deleted = moved.deleteOpening(addedId);
+    const yaml = deleted.exportYaml();
+
+    for (const comment of [
+      "# project comment",
+      "# name comment",
+      "# level comment",
+      "# opening comment",
+      "# extension comment"
+    ]) {
+      expect(yaml).toContain(comment);
+    }
+    expect(yaml.indexOf("name: Authored openings")).toBeLessThan(
+      yaml.indexOf("schemaVersion:")
+    );
+    expect(yaml.indexOf("widthMm: 900")).toBeLessThan(
+      yaml.indexOf("positionMm: 300")
+    );
+    expect(yaml).not.toContain(`id: ${addedId}`);
+    expect(ProjectWorkspace.importYaml(yaml).document).toEqual(deleted.document);
+  });
+
   it("rejects invalid Opening dimensions, hosts, bounds, and invalidating Wall edits atomically", () => {
     const workspace = ProjectWorkspace.create("Atomic openings", {
       idFactory: deterministicIdFactory()
@@ -221,6 +289,24 @@ describe("Project Workspace acceptance seam", () => {
       positionMm: 1200,
       widthMm: 1000
     });
+
+    const fitted = withWindow.updateWallResolvingOpenings(
+      wallId,
+      { lengthMm: 1800, heightMm: 1500 },
+      "fit"
+    );
+    expect(fitted.activeLevel.openings[0]).toMatchObject({
+      positionMm: 800,
+      widthMm: 1000,
+      sillHeightMm: 1000,
+      heightMm: 500
+    });
+    const deleted = withWindow.updateWallResolvingOpenings(
+      wallId,
+      { lengthMm: 1800 },
+      "delete"
+    );
+    expect(deleted.activeLevel.openings).toEqual([]);
   });
 
   it("renames, exports, and imports through one workspace boundary", () => {
