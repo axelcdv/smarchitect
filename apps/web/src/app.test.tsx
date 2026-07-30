@@ -456,4 +456,90 @@ describe("minimal Project Workspace", () => {
     expect(screen.queryByRole("button", { name: "Place" }))
       .not.toBeInTheDocument();
   });
+
+  it("creates, places, updates, makes unique, and undoes Fixtures", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Installed apartment" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Installed apartment" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Fixtures" }));
+    fireEvent.change(screen.getByLabelText("New Fixture name"), {
+      target: { value: "Kitchen sink" }
+    });
+    fireEvent.change(screen.getByLabelText("New Fixture widthMm"), {
+      target: { value: "800" }
+    });
+    fireEvent.change(screen.getByLabelText("New Fixture depthMm"), {
+      target: { value: "500" }
+    });
+    fireEvent.change(screen.getByLabelText("New Fixture heightMm"), {
+      target: { value: "220" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Fixture" }));
+
+    const place = await screen.findByRole("button", { name: "Place" });
+    fireEvent.click(place);
+    const plan = screen.getByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 400, clientY: 260 });
+
+    expect(await screen.findByText("1 Fixture Placement")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Fixture rotation (deg)"), {
+      target: { value: "45" }
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText("Fixture rotation (deg)")).toHaveValue(45));
+    fireEvent.change(screen.getByLabelText("Fixture elevation (mm)"), {
+      target: { value: "850" }
+    });
+    await waitFor(() => {
+      expect(screen.getByLabelText("Fixture elevation (mm)")).toHaveValue(850);
+    });
+
+    fireEvent.change(screen.getByLabelText("Kitchen sink widthMm"), {
+      target: { value: "900" }
+    });
+    fireEvent.blur(screen.getByLabelText("Kitchen sink widthMm"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("Kitchen sink widthMm")).toHaveValue(900));
+    const updateFromLibrary = screen.getByRole("button", {
+      name: "Update from Item Library"
+    });
+    await waitFor(() => expect(updateFromLibrary).toBeEnabled());
+    expect(screen.getByLabelText("Fixture width (mm)")).toHaveValue(800);
+    fireEvent.click(updateFromLibrary);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Fixture width (mm)")).toHaveValue(900));
+    fireEvent.change(screen.getByLabelText("Fixture name"), {
+      target: { value: "Basin" }
+    });
+    await screen.findByRole("heading", { name: "Basin" });
+    const makeUnique = screen.getByRole("button", { name: "Make unique" });
+    await waitFor(() => expect(makeUnique).toBeEnabled());
+    fireEvent.click(makeUnique);
+    await screen.findByRole("heading", { name: "Basin copy" });
+
+    const yaml = (screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value;
+    expect(yaml).toContain("fixtureDefinitions:");
+    expect(yaml).toContain("fixturePlacements:");
+    expect(yaml).toContain("fixture_definition_");
+    expect(yaml).toContain("fixture_placement_");
+
+    fireEvent.click(screen.getByRole("button", {
+      name: "Delete Fixture Placement"
+    }));
+    expect(await screen.findByText("0 Fixture Placements")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("1 Fixture Placement")).toBeInTheDocument();
+  });
 });

@@ -3,6 +3,10 @@ import {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
   type Diagnostic,
+  type FixtureDefinition,
+  type FixtureDefinitionUpdate,
+  type FixturePlacementInput,
+  type FixturePlacementUpdate,
   type FurnitureDefinition,
   type FurnitureDefinitionUpdate,
   type FurniturePlacementInput,
@@ -163,6 +167,7 @@ export function createProjectDocument(
     roomLabels: [],
     openings: [],
     furniturePlacements: [],
+    fixturePlacements: [],
     extensions: {}
   };
   const document: ProjectDocument = {
@@ -172,6 +177,7 @@ export function createProjectDocument(
     units: "metric",
     activeLevelId: level.id,
     furnitureDefinitions: [],
+    fixtureDefinitions: [],
     levels: [level],
     extensions: {}
   };
@@ -600,6 +606,113 @@ export class ProjectWorkspace {
       );
       if (count === level.furniturePlacements.length) {
         throw new Error(`Furniture Placement "${id}" does not exist.`);
+      }
+    });
+  }
+
+  placeFixture(
+    definition: FixtureDefinition,
+    input: FixturePlacementInput
+  ): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
+    if (!level) throw new Error("The active Level is missing from the Project Document.");
+
+    const embedded = candidate.fixtureDefinitions?.find(
+      ({ id }) => id === definition.id
+    );
+    if (!embedded) {
+      candidate.fixtureDefinitions ??= [];
+      candidate.fixtureDefinitions.push(structuredClone(definition));
+    }
+    level.fixturePlacements ??= [];
+    level.fixturePlacements.push({
+      id: this.#idFactory("fixture_placement"),
+      definitionId: definition.id,
+      position: { ...input.position },
+      rotationDeg: normalizeAngleDeg(input.rotationDeg ?? 0),
+      elevationMm: input.elevationMm ?? 0,
+      extensions: {}
+    });
+    return this.#acceptCandidate(candidate);
+  }
+
+  updateFixturePlacement(
+    id: string,
+    update: FixturePlacementUpdate
+  ): ProjectWorkspace {
+    const unsupportedKeys = Object.keys(update).filter(
+      (key) => !["position", "rotationDeg", "elevationMm"].includes(key)
+    );
+    if (unsupportedKeys.length) {
+      throw new Error("Fixture Placement dimension overrides are not supported.");
+    }
+    return this.#replaceActiveLevel((level) => {
+      const placement = level.fixturePlacements?.find(
+        (candidate) => candidate.id === id
+      );
+      if (!placement) throw new Error(`Fixture Placement "${id}" does not exist.`);
+      if (update.position) placement.position = { ...update.position };
+      if (update.rotationDeg !== undefined) {
+        placement.rotationDeg = normalizeAngleDeg(update.rotationDeg);
+      }
+      if (update.elevationMm !== undefined) placement.elevationMm = update.elevationMm;
+    });
+  }
+
+  updateFixtureDefinition(
+    id: string,
+    update: FixtureDefinitionUpdate
+  ): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const definition = candidate.fixtureDefinitions?.find(
+      (item) => item.id === id
+    );
+    if (!definition) throw new Error(`Fixture Definition "${id}" does not exist.`);
+    if (update.name !== undefined) {
+      definition.name = assertNonEmptyName(update.name, "Fixture Definition");
+    }
+    if (update.widthMm !== undefined) definition.widthMm = update.widthMm;
+    if (update.depthMm !== undefined) definition.depthMm = update.depthMm;
+    if (update.heightMm !== undefined) definition.heightMm = update.heightMm;
+    return this.#acceptCandidate(candidate);
+  }
+
+  makeFixturePlacementUnique(id: string): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const level = candidate.levels.find(({ id: levelId }) =>
+      levelId === candidate.activeLevelId
+    );
+    if (!level) throw new Error("The active Level is missing from the Project Document.");
+    const placement = level.fixturePlacements?.find(({ id: placementId }) =>
+      placementId === id
+    );
+    if (!placement) throw new Error(`Fixture Placement "${id}" does not exist.`);
+    const definition = candidate.fixtureDefinitions?.find(
+      ({ id: definitionId }) => definitionId === placement.definitionId
+    );
+    if (!definition) {
+      throw new Error(`Fixture Definition "${placement.definitionId}" does not exist.`);
+    }
+    const copy = {
+      ...structuredClone(definition),
+      id: this.#idFactory("fixture_definition"),
+      name: `${definition.name} copy`
+    };
+    candidate.fixtureDefinitions ??= [];
+    candidate.fixtureDefinitions.push(copy);
+    placement.definitionId = copy.id;
+    return this.#acceptCandidate(candidate);
+  }
+
+  deleteFixturePlacement(id: string): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const count = level.fixturePlacements?.length ?? 0;
+      level.fixturePlacements = (level.fixturePlacements ?? []).filter(
+        (placement) => placement.id !== id
+      );
+      if (count === level.fixturePlacements.length) {
+        throw new Error(`Fixture Placement "${id}" does not exist.`);
       }
     });
   }

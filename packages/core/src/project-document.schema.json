@@ -39,6 +39,12 @@
         "$ref": "#/$defs/furnitureDefinition"
       }
     },
+    "fixtureDefinitions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/fixtureDefinition"
+      }
+    },
     "levels": {
       "type": "array",
       "minItems": 1,
@@ -101,6 +107,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/furniturePlacement"
+          }
+        },
+        "fixturePlacements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fixturePlacement"
           }
         },
         "extensions": {
@@ -315,6 +327,55 @@
         "definitionId": {
           "type": "string",
           "pattern": "^furniture_definition_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "position": { "$ref": "#/$defs/point" },
+        "rotationDeg": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },
+        "elevationMm": { "type": "integer" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "fixtureDefinition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "widthMm",
+        "depthMm",
+        "heightMm",
+        "extensions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^fixture_definition_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "widthMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "depthMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "heightMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "fixturePlacement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "definitionId",
+        "position",
+        "rotationDeg",
+        "elevationMm",
+        "extensions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^fixture_placement_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "definitionId": {
+          "type": "string",
+          "pattern": "^fixture_definition_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         },
         "position": { "$ref": "#/$defs/point" },
         "rotationDeg": { "type": "number", "minimum": 0, "exclusiveMaximum": 360 },

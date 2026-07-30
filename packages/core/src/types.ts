@@ -14,6 +14,7 @@ export interface Level {
   roomLabels: RoomLabel[];
   openings: Opening[];
   furniturePlacements?: FurniturePlacement[];
+  fixturePlacements?: FixturePlacement[];
   extensions: ExtensionData;
 }
 
@@ -177,6 +178,38 @@ export interface FurniturePlacementUpdate {
   elevationMm?: number;
 }
 
+export interface FixtureDefinition {
+  id: string;
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+  extensions: ExtensionData;
+}
+
+export interface FixtureDefinitionInput {
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+}
+
+export type FixtureDefinitionUpdate = Partial<
+  Pick<FixtureDefinition, "name" | "widthMm" | "depthMm" | "heightMm">
+>;
+
+export interface FixturePlacement {
+  id: string;
+  definitionId: string;
+  position: PointMm;
+  rotationDeg: number;
+  elevationMm: number;
+  extensions: ExtensionData;
+}
+
+export type FixturePlacementInput = FurniturePlacementInput;
+export type FixturePlacementUpdate = FurniturePlacementUpdate;
+
 export interface WallJunction {
   point: PointMm;
   wallIds: string[];
@@ -218,6 +251,7 @@ export interface ProjectDocument {
   units: MeasurementUnits;
   activeLevelId: string;
   furnitureDefinitions?: FurnitureDefinition[];
+  fixtureDefinitions?: FixtureDefinition[];
   levels: Level[];
   extensions: ExtensionData;
 }
@@ -243,7 +277,9 @@ export type EntityKind =
   | "room-label"
   | "opening"
   | "furniture_definition"
-  | "furniture_placement";
+  | "furniture_placement"
+  | "fixture_definition"
+  | "fixture_placement";
 export type IdFactory = (kind: EntityKind) => string;
 
 export interface CreateProjectDocumentOptions {
@@ -251,5 +287,9 @@ export interface CreateProjectDocumentOptions {
 }
 
 export interface CreateFurnitureDefinitionOptions {
+  idFactory?: IdFactory;
+}
+
+export interface CreateFixtureDefinitionOptions {
   idFactory?: IdFactory;
 }
