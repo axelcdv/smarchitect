@@ -2,6 +2,7 @@ import {
   type ChangeEventHandler,
   type RefObject
 } from "react";
+import { ProjectImportControl } from "./ProjectImportControl.js";
 import { downloadProjectYaml } from "./project-file.js";
 
 interface WorkspaceHeaderProps {
@@ -52,13 +53,11 @@ export function WorkspaceHeader({
         >
           Redo
         </button>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => importInputRef.current?.click()}
-        >
-          Import YAML
-        </button>
+        <ProjectImportControl
+          buttonClassName="secondary-button"
+          importInputRef={importInputRef}
+          onImport={onImport}
+        />
         <button
           type="button"
           className="primary-button"
@@ -66,14 +65,6 @@ export function WorkspaceHeader({
         >
           Export YAML
         </button>
-        <input
-          ref={importInputRef}
-          className="visually-hidden"
-          type="file"
-          accept=".yaml,.yml,application/yaml,text/yaml"
-          onChange={onImport}
-          aria-label="Import Project Document"
-        />
       </div>
     </header>
   );

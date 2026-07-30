@@ -2,6 +2,7 @@ import {
   type ChangeEventHandler,
   type RefObject
 } from "react";
+import { ProjectImportControl } from "./ProjectImportControl.js";
 
 interface WelcomeScreenProps {
   draftName: string;
@@ -50,21 +51,11 @@ export function WelcomeScreen({
           >
             Create project
           </button>
-          <button
-            className="secondary-button"
-            type="button"
+          <ProjectImportControl
+            buttonClassName="secondary-button"
             disabled={isSaving}
-            onClick={() => importInputRef.current?.click()}
-          >
-            Import YAML
-          </button>
-          <input
-            ref={importInputRef}
-            className="visually-hidden"
-            type="file"
-            accept=".yaml,.yml,application/yaml,text/yaml"
-            onChange={onImport}
-            aria-label="Import Project Document"
+            importInputRef={importInputRef}
+            onImport={onImport}
           />
         </div>
         {error ? <p className="error-message">{error}</p> : null}
