@@ -25,6 +25,7 @@ export {
 export {
   deriveRooms,
   findRoomContainingPoint,
+  findRoomLabelAtPoint,
   pointInRoom
 } from "./room-geometry.js";
 export {

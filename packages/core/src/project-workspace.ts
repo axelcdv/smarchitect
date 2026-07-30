@@ -1,4 +1,4 @@
-import { stringify } from "yaml";
+import { parseDocument, stringify, type Document } from "yaml";
 import {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
@@ -30,6 +30,79 @@ function defaultIdFactory(kind: EntityKind): string {
 
 function cloneProjectDocument(document: ProjectDocument): ProjectDocument {
   return structuredClone(document);
+}
+
+function valuesMatch(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function reconcileYamlNode(
+  yamlDocument: Document,
+  path: readonly (string | number)[],
+  previous: unknown,
+  next: unknown
+): void {
+  if (valuesMatch(previous, next)) return;
+
+  if (Array.isArray(previous) && Array.isArray(next)) {
+    if (previous.length === next.length) {
+      next.forEach((value, index) => {
+        reconcileYamlNode(yamlDocument, [...path, index], previous[index], value);
+      });
+      return;
+    }
+    if (
+      next.length === previous.length + 1
+      && valuesMatch(previous, next.slice(0, -1))
+    ) {
+      yamlDocument.setIn([...path, previous.length], next.at(-1));
+      return;
+    }
+    if (previous.length === next.length + 1) {
+      const removedIndex = previous.findIndex((_value, index) =>
+        valuesMatch(
+          [...previous.slice(0, index), ...previous.slice(index + 1)],
+          next
+        )
+      );
+      if (removedIndex >= 0) {
+        yamlDocument.deleteIn([...path, removedIndex]);
+        return;
+      }
+    }
+    yamlDocument.setIn(path, next);
+    return;
+  }
+
+  if (isRecord(previous) && isRecord(next)) {
+    for (const key of Object.keys(previous)) {
+      if (!(key in next)) yamlDocument.deleteIn([...path, key]);
+    }
+    for (const [key, value] of Object.entries(next)) {
+      if (!(key in previous)) {
+        yamlDocument.setIn([...path, key], value);
+      } else {
+        reconcileYamlNode(yamlDocument, [...path, key], previous[key], value);
+      }
+    }
+    return;
+  }
+
+  yamlDocument.setIn(path, next);
+}
+
+function updateYamlSource(
+  source: string,
+  previous: ProjectDocument,
+  next: ProjectDocument
+): string {
+  const yamlDocument = parseDocument(source);
+  reconcileYamlNode(yamlDocument, [], previous, next);
+  return yamlDocument.toString({ lineWidth: 0 });
 }
 
 function assertNonEmptyName(name: string, subject: string): string {
@@ -88,10 +161,16 @@ export class ProjectValidationError extends Error {
 export class ProjectWorkspace {
   #document: ProjectDocument;
   #idFactory: IdFactory;
+  #source: string;
 
-  private constructor(document: ProjectDocument, idFactory: IdFactory = defaultIdFactory) {
+  private constructor(
+    document: ProjectDocument,
+    idFactory: IdFactory = defaultIdFactory,
+    source: string = stringify(document, { lineWidth: 0 })
+  ) {
     this.#document = cloneProjectDocument(document);
     this.#idFactory = idFactory;
+    this.#source = source;
   }
 
   static create(
@@ -115,7 +194,7 @@ export class ProjectWorkspace {
     for (const level of document.levels) {
       level.roomLabels ??= [];
     }
-    return new ProjectWorkspace(document);
+    return new ProjectWorkspace(document, defaultIdFactory, source);
   }
 
   get document(): ProjectDocument {
@@ -183,7 +262,11 @@ export class ProjectWorkspace {
       throw new ProjectValidationError(diagnostics);
     }
 
-    return new ProjectWorkspace(candidate, this.#idFactory);
+    return new ProjectWorkspace(
+      candidate,
+      this.#idFactory,
+      updateYamlSource(this.#source, this.#document, candidate)
+    );
   }
 
   #replaceActiveLevel(update: (level: Level) => void): ProjectWorkspace {
@@ -199,7 +282,11 @@ export class ProjectWorkspace {
     if (diagnostics.length) {
       throw new ProjectValidationError(diagnostics);
     }
-    return new ProjectWorkspace(candidate, this.#idFactory);
+    return new ProjectWorkspace(
+      candidate,
+      this.#idFactory,
+      updateYamlSource(this.#source, this.#document, candidate)
+    );
   }
 
   addWall(input: WallInput): ProjectWorkspace {
@@ -309,8 +396,6 @@ export class ProjectWorkspace {
   }
 
   exportYaml(): string {
-    return stringify(this.#document, {
-      lineWidth: 0
-    });
+    return this.#source;
   }
 }

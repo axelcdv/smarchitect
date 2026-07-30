@@ -36,6 +36,78 @@ function polygonArea(points: PointMm[]): number {
   }, 0) / 2;
 }
 
+function dot(a: PointMm, b: PointMm): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+function pointOnLineSegment(
+  point: PointMm,
+  start: PointMm,
+  end: PointMm
+): boolean {
+  const direction = subtract(end, start);
+  const fromStart = subtract(point, start);
+  return Math.abs(cross(fromStart, direction)) <= EPSILON
+    && dot(fromStart, subtract(point, end)) <= EPSILON;
+}
+
+function pointInOrOnPolygon(point: PointMm, polygon: PointMm[]): boolean {
+  if (polygon.some((start, index) =>
+    pointOnLineSegment(point, start, polygon[(index + 1) % polygon.length]!)
+  )) {
+    return true;
+  }
+  let inside = false;
+  for (let index = 0, previous = polygon.length - 1;
+    index < polygon.length;
+    previous = index, index += 1) {
+    const currentPoint = polygon[index]!;
+    const previousPoint = polygon[previous]!;
+    const crosses = (currentPoint.y > point.y) !== (previousPoint.y > point.y)
+      && point.x < (previousPoint.x - currentPoint.x)
+        * (point.y - currentPoint.y)
+        / (previousPoint.y - currentPoint.y)
+        + currentPoint.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+
+function segmentsCross(
+  firstStart: PointMm,
+  firstEnd: PointMm,
+  secondStart: PointMm,
+  secondEnd: PointMm
+): boolean {
+  const firstDirection = subtract(firstEnd, firstStart);
+  const secondDirection = subtract(secondEnd, secondStart);
+  const denominator = cross(firstDirection, secondDirection);
+  if (Math.abs(denominator) <= EPSILON) {
+    return pointOnLineSegment(firstStart, secondStart, secondEnd)
+      || pointOnLineSegment(firstEnd, secondStart, secondEnd)
+      || pointOnLineSegment(secondStart, firstStart, firstEnd)
+      || pointOnLineSegment(secondEnd, firstStart, firstEnd);
+  }
+  const delta = subtract(secondStart, firstStart);
+  const firstParameter = cross(delta, secondDirection) / denominator;
+  const secondParameter = cross(delta, firstDirection) / denominator;
+  return firstParameter >= -EPSILON && firstParameter <= 1 + EPSILON
+    && secondParameter >= -EPSILON && secondParameter <= 1 + EPSILON;
+}
+
+function polygonIsSimple(points: PointMm[]): boolean {
+  return points.every((start, firstIndex) => {
+    const firstEnd = points[(firstIndex + 1) % points.length]!;
+    return points.every((secondStart, secondIndex) => {
+      const secondEnd = points[(secondIndex + 1) % points.length]!;
+      const adjacent = firstIndex === secondIndex
+        || (firstIndex + 1) % points.length === secondIndex
+        || (secondIndex + 1) % points.length === firstIndex;
+      return adjacent || !segmentsCross(start, firstEnd, secondStart, secondEnd);
+    });
+  });
+}
+
 function intersectionParameters(first: Wall, second: Wall): [number, number] | undefined {
   const firstDirection = subtract(first.path.end, first.path.start);
   const secondDirection = subtract(second.path.end, second.path.start);
@@ -141,7 +213,35 @@ function interiorBoundary(cycle: HalfEdge[]): PointMm[] | undefined {
       y: previous.point.y + previous.direction.y * parameter
     };
   });
-  return polygonArea(boundary) > EPSILON ? boundary : undefined;
+  const centerline = cycle.map(({ start }) => start);
+  const remainsInward = boundary.every((start, index) => {
+    const end = boundary[(index + 1) % boundary.length]!;
+    const offsetLine = offsetLines[index]!;
+    const edge = cycle[index]!;
+    const inwardDistance = edge.wall.thicknessMm
+      * Math.hypot(offsetLine.direction.x, offsetLine.direction.y) / 2;
+    return cross(offsetLine.direction, subtract(start, edge.start))
+        >= inwardDistance - EPSILON
+      && cross(offsetLine.direction, subtract(end, edge.start))
+        >= inwardDistance - EPSILON;
+  });
+  const hasForwardEdges = boundary.every((start, index) =>
+    dot(
+      subtract(boundary[(index + 1) % boundary.length]!, start),
+      offsetLines[index]!.direction
+    ) > EPSILON
+  );
+  const isContained = boundary.every((point) =>
+    pointInOrOnPolygon(point, centerline)
+  );
+  return boundary.every(({ x, y }) => Number.isFinite(x) && Number.isFinite(y))
+    && polygonArea(boundary) > EPSILON
+    && polygonIsSimple(boundary)
+    && remainsInward
+    && hasForwardEdges
+    && isContained
+    ? boundary
+    : undefined;
 }
 
 function stableRoomId(cycle: HalfEdge[]): string {
@@ -179,6 +279,23 @@ export function findRoomContainingPoint(
   rooms: Room[]
 ): Room | undefined {
   return rooms.find((room) => pointInRoom(point, room));
+}
+
+export function findRoomLabelAtPoint(
+  point: PointMm,
+  labels: RoomLabel[],
+  toleranceMm: number
+): RoomLabel | undefined {
+  return labels
+    .map((label) => ({
+      label,
+      distance: Math.hypot(
+        label.position.x - point.x,
+        label.position.y - point.y
+      )
+    }))
+    .filter(({ distance }) => distance <= toleranceMm)
+    .sort((left, right) => left.distance - right.distance)[0]?.label;
 }
 
 export function deriveRooms(walls: Wall[], labels: RoomLabel[] = []): Room[] {

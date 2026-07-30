@@ -1,6 +1,7 @@
 import {
   deriveWallFaces,
   deriveWallJunctions,
+  findRoomLabelAtPoint,
   findWallAtPoint,
   findWallEndpointAtPoint,
   ProjectValidationError,
@@ -201,16 +202,7 @@ export function App() {
       return;
     }
 
-    const label = roomLabels
-      .map((candidate) => ({
-        candidate,
-        distance: Math.hypot(
-          candidate.position.x - point.x,
-          candidate.position.y - point.y
-        )
-      }))
-      .filter(({ distance }) => distance <= view.width / 80)
-      .sort((left, right) => left.distance - right.distance)[0]?.candidate;
+    const label = findRoomLabelAtPoint(point, roomLabels, view.width / 80);
     if (label) {
       setSelectedRoomLabelId(label.id);
       setSelectedWallId(undefined);

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   deriveRooms,
   findRoomContainingPoint,
+  findRoomLabelAtPoint,
+  type RoomLabel,
   type Wall
 } from "./index.js";
 
@@ -25,6 +27,28 @@ function wall(
 }
 
 describe("Room geometry", () => {
+  it("hit-tests the nearest Room Label within the supplied tolerance", () => {
+    const labels: RoomLabel[] = [
+      {
+        id: "room-label_a",
+        name: "Kitchen",
+        position: { x: 1000, y: 1000 },
+        extensions: {}
+      },
+      {
+        id: "room-label_b",
+        name: "Dining",
+        position: { x: 1010, y: 1000 },
+        extensions: {}
+      }
+    ];
+
+    expect(findRoomLabelAtPoint({ x: 1007, y: 1000 }, labels, 8)?.id)
+      .toBe("room-label_b");
+    expect(findRoomLabelAtPoint({ x: 1007, y: 1000 }, labels, 2))
+      .toBeUndefined();
+  });
+
   it("derives the usable region and dimensions from physical Wall faces", () => {
     const rooms = deriveRooms([
       wall("wall_a", [0, 0], [4000, 0]),
@@ -98,5 +122,29 @@ describe("Room geometry", () => {
     ]);
     expect(findRoomContainingPoint({ x: 1000, y: 1500 }, rooms)?.id)
       .not.toBe(findRoomContainingPoint({ x: 3000, y: 1500 }, rooms)?.id);
+  });
+
+  it("rejects enclosures whose physical Wall faces collapse or cross", () => {
+    const narrow = [
+      wall("wall_a", [0, 0], [150, 0], 200),
+      wall("wall_b", [150, 0], [150, 3000], 200),
+      wall("wall_c", [150, 3000], [0, 3000], 200),
+      wall("wall_d", [0, 3000], [0, 0], 200)
+    ];
+    const thick = [
+      wall("wall_e", [0, 0], [150, 0], 200),
+      wall("wall_f", [150, 0], [150, 150], 200),
+      wall("wall_g", [150, 150], [0, 150], 200),
+      wall("wall_h", [0, 150], [0, 0], 200)
+    ];
+    const acute = [
+      wall("wall_i", [0, 0], [3000, 0], 500),
+      wall("wall_j", [3000, 0], [100, 300], 500),
+      wall("wall_k", [100, 300], [0, 0], 500)
+    ];
+
+    expect(deriveRooms(narrow)).toEqual([]);
+    expect(deriveRooms(thick)).toEqual([]);
+    expect(deriveRooms(acute)).toEqual([]);
   });
 });

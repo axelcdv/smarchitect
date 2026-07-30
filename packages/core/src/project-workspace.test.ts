@@ -155,6 +155,61 @@ describe("Project Workspace acceptance seam", () => {
     expect(moved.deleteRoomLabel(labelId).activeLevel.roomLabels).toEqual([]);
   });
 
+  it("preserves authored YAML comments, ordering, and extensions during Room Label mutations", () => {
+    const source = `# authored project comment
+name: Labelled home # keep project name comment
+schemaVersion: 1.0.0
+units: metric
+id: project_00000000-0000-4000-8000-000000000001
+levels:
+  - name: Ground floor # keep level comment
+    id: level_00000000-0000-4000-8000-000000000002
+    roomLabels:
+      - name: Kitchen # keep label comment
+        id: room-label_00000000-0000-4000-8000-000000000008
+        extensions:
+          example.test:room-label:
+            authored: true # keep extension comment
+        position:
+          y: 1200
+          x: 1000
+    walls: []
+    extensions:
+      example.test:level:
+        preserved: yes
+    defaultWallHeightMm: 2500
+    baseElevationMm: 0
+activeLevelId: level_00000000-0000-4000-8000-000000000002
+extensions:
+  example.test:project:
+    preserved: yes
+`;
+    const imported = ProjectWorkspace.importYaml(source);
+    const labelId = imported.activeLevel.roomLabels[0]!.id;
+    const added = imported.addRoomLabel({
+      name: "Dining",
+      position: { x: 2000, y: 1200 }
+    });
+    const updated = added.updateRoomLabel(labelId, { name: "Cooking" });
+    const moved = updated.moveRoomLabel(labelId, { x: 100, y: 200 });
+    const addedId = added.activeLevel.roomLabels[1]!.id;
+    const deleted = moved.deleteRoomLabel(addedId);
+    const yaml = deleted.exportYaml();
+
+    expect(yaml).toContain("# authored project comment");
+    expect(yaml).toContain("# keep project name comment");
+    expect(yaml).toContain("# keep level comment");
+    expect(yaml).toContain("# keep label comment");
+    expect(yaml).toContain("# keep extension comment");
+    expect(yaml.indexOf("name: Labelled home")).toBeLessThan(
+      yaml.indexOf("schemaVersion:")
+    );
+    expect(yaml.indexOf("name: Cooking")).toBeLessThan(yaml.indexOf(`id: ${labelId}`));
+    expect(yaml.indexOf("y: 1400")).toBeLessThan(yaml.indexOf("x: 1100"));
+    expect(yaml).not.toContain("name: Dining");
+    expect(ProjectWorkspace.importYaml(yaml).document).toEqual(deleted.document);
+  });
+
   it("keeps labels through splits and diagnoses outside and merged labels", () => {
     let workspace = ProjectWorkspace.create("Changing rooms", {
       idFactory: deterministicIdFactory()
