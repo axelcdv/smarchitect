@@ -3,6 +3,8 @@ import {
   deriveWallJunctions,
   findWallAtPoint,
   findWallEndpointAtPoint,
+  furnitureFootprintCorners,
+  furniturePlacementContainsPoint,
   ProjectValidationError,
   ProjectWorkspace,
   snapAngle,
@@ -10,6 +12,9 @@ import {
   snapWallDelta,
   wallAngleDeg,
   type PointMm,
+  type FurnitureDefinition,
+  type FurnitureDefinitionUpdate,
+  type FurniturePlacementUpdate,
   type Wall
 } from "@smarchitect/core";
 import {
@@ -22,6 +27,8 @@ import {
 } from "react";
 import {
   AutosavedProject,
+  AutosavedFurnitureLibrary,
+  IndexedDbFurnitureLibraryRepository,
   IndexedDbProjectRepository,
   SerializedProjectRepository
 } from "./project-persistence.js";
@@ -30,6 +37,13 @@ import "./styles.css";
 type WallEditField =
   | "startX" | "startY" | "endX" | "endY"
   | "lengthMm" | "angleDeg" | "thicknessMm" | "heightMm";
+
+const EMPTY_FURNITURE_DRAFT = {
+  name: "",
+  widthMm: 1000,
+  depthMm: 600,
+  heightMm: 800
+};
 
 function wallPolygonPoints(wall: Wall): string {
   return deriveWallFaces(wall)
@@ -63,24 +77,45 @@ export function App() {
   const [yaml, setYaml] = useState("");
   const [error, setError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
-  const [mode, setMode] = useState<"draw" | "select">("draw");
+  const [selectedFurnitureId, setSelectedFurnitureId] = useState<string>();
+  const [placingDefinitionId, setPlacingDefinitionId] = useState<string>();
+  const [libraryDefinitions, setLibraryDefinitions] = useState<FurnitureDefinition[]>([]);
+  const [libraryHistoryControls, setLibraryHistoryControls] = useState({
+    canUndo: false,
+    canRedo: false
+  });
+  const [furnitureDraft, setFurnitureDraft] = useState(EMPTY_FURNITURE_DRAFT);
+  const [mode, setMode] = useState<"draw" | "select" | "placeFurniture">("draw");
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
     | { kind: "draw"; start: PointMm }
     | { kind: "move"; wallId: string; start: PointMm }
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
+    | { kind: "furnitureMove"; placementId: string; start: PointMm }
   >();
   const importInput = useRef<HTMLInputElement>(null);
   const repository = useRef(
     new SerializedProjectRepository(new IndexedDbProjectRepository())
   );
   const autosavedProject = useRef<AutosavedProject | undefined>(undefined);
+  const libraryRepository = useRef(new IndexedDbFurnitureLibraryRepository());
+  const autosavedLibrary = useRef<AutosavedFurnitureLibrary | undefined>(undefined);
   const transitionPending = useRef(false);
   const document = workspace?.document;
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
+  const furniturePlacements = activeLevel?.furniturePlacements ?? [];
+  const selectedFurniture = furniturePlacements.find(
+    ({ id }) => id === selectedFurnitureId
+  );
+  const selectedFurnitureDefinition = document?.furnitureDefinitions.find(
+    ({ id }) => id === selectedFurniture?.definitionId
+  );
+  const selectedLibraryDefinition = libraryDefinitions.find(
+    ({ id }) => id === selectedFurnitureDefinition?.id
+  );
 
   function refreshHistoryControls(project: AutosavedProject): void {
     setHistoryControls({
@@ -104,6 +139,29 @@ export function App() {
         if (active && !autosavedProject.current) {
           setError("Local recovery is unavailable. New edits may not survive reload.");
         }
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void AutosavedFurnitureLibrary.restore(libraryRepository.current)
+      .then(async (restored) => {
+        const library = restored
+          ?? await AutosavedFurnitureLibrary.create(libraryRepository.current);
+        if (active) {
+          autosavedLibrary.current = library;
+          setLibraryDefinitions(library.definitions);
+          setLibraryHistoryControls({
+            canUndo: library.canUndo,
+            canRedo: library.canRedo
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setError("The Item Library could not be loaded.");
       });
     return () => {
       active = false;
@@ -163,6 +221,7 @@ export function App() {
     );
     if (restored) {
       setSelectedWallId(undefined);
+      setSelectedFurnitureId(undefined);
       refreshHistoryControls(project);
     }
   }
@@ -179,12 +238,49 @@ export function App() {
     return clientPoint(event.currentTarget, event.clientX, event.clientY);
   }
 
-  function beginPlanGesture(event: PointerEvent<SVGSVGElement>): void {
+  async function beginPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
     if (transitionPending.current) return;
     const point = eventPoint(event);
     const snapTolerance = view.width / 80;
+    if (mode === "placeFurniture") {
+      const definition = libraryDefinitions.find(
+        ({ id }) => id === placingDefinitionId
+      );
+      if (!workspace || !definition) return;
+      const durable = await commit(workspace.placeFurniture(definition, {
+        position: point
+      }));
+      if (durable) {
+        setSelectedFurnitureId(
+          durable.activeLevel.furniturePlacements.at(-1)?.id
+        );
+        setSelectedWallId(undefined);
+        setMode("select");
+        setPlacingDefinitionId(undefined);
+      }
+      return;
+    }
     if (mode === "draw") {
       setGesture({ kind: "draw", start: snapPoint(point, walls, snapTolerance) });
+      return;
+    }
+
+    const furniture = [...furniturePlacements].reverse().find((placement) => {
+      const definition = document?.furnitureDefinitions.find(
+        ({ id }) => id === placement.definitionId
+      );
+      return definition
+        ? furniturePlacementContainsPoint(definition, placement, point)
+        : false;
+    });
+    if (furniture) {
+      setSelectedFurnitureId(furniture.id);
+      setSelectedWallId(undefined);
+      setGesture({
+        kind: "furnitureMove",
+        placementId: furniture.id,
+        start: point
+      });
       return;
     }
 
@@ -202,6 +298,7 @@ export function App() {
 
     const wall = findWallAtPoint(point, walls, view.width / 400);
     setSelectedWallId(wall?.id);
+    setSelectedFurnitureId(undefined);
     if (wall) {
       setGesture({ kind: "move", wallId: wall.id, start: point });
     }
@@ -232,7 +329,7 @@ export function App() {
         }, walls.filter(({ id }) => id !== wall.id), view.width / 80);
         await commit(workspace.moveWall(gesture.wallId, delta));
       }
-    } else {
+    } else if (gesture.kind === "endpoint") {
       const wall = walls.find(({ id }) => id === gesture.wallId);
       if (wall) {
         const other = gesture.endpoint === "start" ? wall.path.end : wall.path.start;
@@ -243,8 +340,111 @@ export function App() {
           [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
         }));
       }
+    } else {
+      const placement = furniturePlacements.find(
+        ({ id }) => id === gesture.placementId
+      );
+      if (placement) {
+        await commit(workspace.updateFurniturePlacement(placement.id, {
+          position: {
+            x: placement.position.x + point.x - gesture.start.x,
+            y: placement.position.y + point.y - gesture.start.y
+          }
+        }));
+      }
     }
     setGesture(undefined);
+  }
+
+  async function saveLibrary(
+    transition: (definitions: FurnitureDefinition[]) => FurnitureDefinition[]
+  ): Promise<void> {
+    try {
+      const library = autosavedLibrary.current;
+      if (!library) throw new Error("The Item Library is not ready.");
+      setLibraryDefinitions(await library.transact((definitions) => {
+        const next = transition(definitions);
+        if (next.some((definition) =>
+          !definition.name.trim()
+          || !Number.isInteger(definition.widthMm) || definition.widthMm <= 0
+          || !Number.isInteger(definition.depthMm) || definition.depthMm <= 0
+          || !Number.isInteger(definition.heightMm) || definition.heightMm <= 0
+        )) {
+          throw new Error(
+            "Furniture Definitions need a name and positive integer-millimetre dimensions."
+          );
+        }
+        return next;
+      }));
+      setLibraryHistoryControls({
+        canUndo: library.canUndo,
+        canRedo: library.canRedo
+      });
+      setError("");
+    } catch (cause) {
+      setError(cause instanceof Error
+        ? cause.message
+        : "The Item Library change could not be saved.");
+    }
+  }
+
+  async function navigateLibraryHistory(direction: "undo" | "redo"): Promise<void> {
+    const library = autosavedLibrary.current;
+    if (!library) return;
+    try {
+      const definitions = direction === "undo"
+        ? await library.undo()
+        : await library.redo();
+      setLibraryDefinitions(definitions);
+      setLibraryHistoryControls({
+        canUndo: library.canUndo,
+        canRedo: library.canRedo
+      });
+      setError("");
+    } catch {
+      setError("The Item Library history change could not be saved.");
+    }
+  }
+
+  async function createFurnitureDefinition(): Promise<void> {
+    const definition: FurnitureDefinition = {
+      id: `furniture_definition_${globalThis.crypto.randomUUID()}`,
+      name: furnitureDraft.name.trim(),
+      widthMm: Math.round(furnitureDraft.widthMm),
+      depthMm: Math.round(furnitureDraft.depthMm),
+      heightMm: Math.round(furnitureDraft.heightMm),
+      extensions: {}
+    };
+    await saveLibrary((definitions) => [...definitions, definition]);
+    setFurnitureDraft(EMPTY_FURNITURE_DRAFT);
+  }
+
+  async function updateLibraryDefinition(
+    definition: FurnitureDefinition,
+    update: FurnitureDefinitionUpdate
+  ): Promise<void> {
+    await saveLibrary((definitions) => definitions.map((candidate) =>
+      candidate.id === definition.id
+        ? { ...candidate, ...update }
+        : candidate
+    ));
+  }
+
+  async function editFurniturePlacement(
+    update: FurniturePlacementUpdate
+  ): Promise<void> {
+    if (!workspace || !selectedFurniture) return;
+    await commit(workspace.updateFurniturePlacement(selectedFurniture.id, update));
+  }
+
+  async function editEmbeddedDefinition(
+    update: FurnitureDefinitionUpdate
+  ): Promise<void> {
+    if (!workspace || !selectedFurnitureDefinition) return;
+    await commit(workspace.updateFurnitureDefinition(
+      selectedFurnitureDefinition.id,
+      update
+    ));
   }
 
   async function editSelected(field: WallEditField, value: string): Promise<void> {
@@ -424,6 +624,122 @@ export function App() {
               </small>
             </div>
           </div>
+          <section className="item-library" aria-labelledby="item-library-title">
+            <div>
+              <p className="eyebrow">Reusable items</p>
+              <h2 id="item-library-title">Item Library</h2>
+            </div>
+            <div className="library-history-actions">
+              <button
+                type="button"
+                disabled={!libraryHistoryControls.canUndo}
+                onClick={() => void navigateLibraryHistory("undo")}
+              >
+                Undo Item Library
+              </button>
+              <button
+                type="button"
+                disabled={!libraryHistoryControls.canRedo}
+                onClick={() => void navigateLibraryHistory("redo")}
+              >
+                Redo Item Library
+              </button>
+            </div>
+            <div className="furniture-definition-form">
+              <label>
+                <span>Name</span>
+                <input
+                  aria-label="New Furniture name"
+                  value={furnitureDraft.name}
+                  onChange={(event) => setFurnitureDraft((draft) => ({
+                    ...draft,
+                    name: event.target.value
+                  }))}
+                />
+              </label>
+              {(["widthMm", "depthMm", "heightMm"] as const).map((field) => (
+                <label key={field}>
+                  <span>{field === "widthMm" ? "Width" : field === "depthMm" ? "Depth" : "Height"} (mm)</span>
+                  <input
+                    aria-label={`New Furniture ${field}`}
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={furnitureDraft[field]}
+                    onChange={(event) => setFurnitureDraft((draft) => ({
+                      ...draft,
+                      [field]: Number(event.target.value)
+                    }))}
+                  />
+                </label>
+              ))}
+              <button
+                type="button"
+                className="primary-button"
+                disabled={isSaving || !furnitureDraft.name.trim()}
+                onClick={() => void createFurnitureDefinition()}
+              >
+                Create Furniture
+              </button>
+            </div>
+            <div className="library-list">
+              {libraryDefinitions.map((definition) => (
+                <article key={definition.id} className="library-card">
+                  <label>
+                    <span>Name</span>
+                    <input
+                      aria-label={`${definition.name} name`}
+                      defaultValue={definition.name}
+                      onBlur={(event) => void updateLibraryDefinition(
+                        definition,
+                        { name: event.target.value }
+                      )}
+                    />
+                  </label>
+                  {(["widthMm", "depthMm", "heightMm"] as const).map((field) => (
+                    <label key={field}>
+                      <span>{field.replace("Mm", "")}</span>
+                      <input
+                        aria-label={`${definition.name} ${field}`}
+                        type="number"
+                        min="1"
+                        step="1"
+                        defaultValue={definition[field]}
+                        onBlur={(event) => void updateLibraryDefinition(
+                          definition,
+                          { [field]: Math.round(Number(event.target.value)) }
+                        )}
+                      />
+                    </label>
+                  ))}
+                  <div className="library-actions">
+                    <button
+                      type="button"
+                      disabled={isSaving}
+                      onClick={() => {
+                        setPlacingDefinitionId(definition.id);
+                        setMode("placeFurniture");
+                      }}
+                    >
+                      Place
+                    </button>
+                    <button
+                      type="button"
+                      className="danger-button"
+                      disabled={isSaving}
+                      onClick={() => void saveLibrary(
+                        (definitions) => definitions.filter(
+                          ({ id }) => id !== definition.id
+                        )
+                      )}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
           <dl className="project-facts">
             <div>
               <dt>Units</dt>
@@ -458,7 +774,12 @@ export function App() {
           <div className="plan-toolbar">
             <button disabled={isSaving} className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
             <button disabled={isSaving} className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
-            <span>{walls.length} {walls.length === 1 ? "wall" : "walls"}</span>
+            <span className="plan-count">
+              {`${walls.length} ${walls.length === 1 ? "wall" : "walls"}`}
+            </span>
+            <span>
+              {`${furniturePlacements.length} Furniture ${furniturePlacements.length === 1 ? "Placement" : "Placements"}`}
+            </span>
             <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
             <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
             <button type="button" aria-label="Pan left" onClick={() => setView((current) => ({ ...current, x: current.x - current.width / 10 }))}>←</button>
@@ -471,8 +792,8 @@ export function App() {
             viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
             role="application"
             aria-label={`${activeLevel.name} wall editor`}
-            onPointerDown={beginPlanGesture}
-            onPointerUp={finishPlanGesture}
+            onPointerDown={(event) => void beginPlanGesture(event)}
+            onPointerUp={(event) => void finishPlanGesture(event)}
             onWheel={(event: WheelEvent<SVGSVGElement>) => {
               event.preventDefault();
               const factor = event.deltaY > 0 ? 1.1 : .9;
@@ -499,6 +820,23 @@ export function App() {
                   : "";
               }).join(" ")}
             />
+            {furniturePlacements.map((placement) => {
+              const definition = document.furnitureDefinitions.find(
+                ({ id }) => id === placement.definitionId
+              );
+              if (!definition) return null;
+              return (
+                <polygon
+                  key={placement.id}
+                  className={placement.id === selectedFurnitureId
+                    ? "furniture-footprint selected-furniture"
+                    : "furniture-footprint"}
+                  points={furnitureFootprintCorners(definition, placement)
+                    .map(({ x, y }) => `${x},${-y}`)
+                    .join(" ")}
+                />
+              );
+            })}
             {selectedWall ? (
               <polygon
                 className="selected-wall"
@@ -537,6 +875,94 @@ export function App() {
                   setSelectedWallId(undefined);
                 }
               }}>Delete wall</button>
+            </div>
+          ) : null}
+          {selectedFurniture && selectedFurnitureDefinition ? (
+            <div className="furniture-properties" aria-label="Selected Furniture Placement properties">
+              <h3>{selectedFurnitureDefinition.name}</h3>
+              {([
+                ["x", "Furniture X (mm)", selectedFurniture.position.x],
+                ["y", "Furniture Y (mm)", selectedFurniture.position.y],
+                ["rotationDeg", "Furniture rotation (deg)", selectedFurniture.rotationDeg],
+                ["elevationMm", "Furniture elevation (mm)", selectedFurniture.elevationMm]
+              ] as const).map(([field, label, value]) => (
+                <label key={field}>
+                  <span>{label}</span>
+                  <input
+                    aria-label={label}
+                    disabled={isSaving}
+                    type="number"
+                    step={field === "rotationDeg" ? "any" : "1"}
+                    value={value}
+                    onChange={(event) => {
+                      const numeric = Number(event.target.value);
+                      if (!Number.isFinite(numeric)) return;
+                      void editFurniturePlacement(field === "x"
+                        ? { position: { ...selectedFurniture.position, x: Math.round(numeric) } }
+                        : field === "y"
+                          ? { position: { ...selectedFurniture.position, y: Math.round(numeric) } }
+                          : { [field]: field === "rotationDeg" ? numeric : Math.round(numeric) });
+                    }}
+                  />
+                </label>
+              ))}
+              {([
+                ["widthMm", "Furniture width (mm)"],
+                ["depthMm", "Furniture depth (mm)"],
+                ["heightMm", "Furniture height (mm)"]
+              ] as const).map(([field, label]) => (
+                <label key={field}>
+                  <span>{label}</span>
+                  <input
+                    aria-label={label}
+                    disabled={isSaving}
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={selectedFurnitureDefinition[field]}
+                    onChange={(event) => void editEmbeddedDefinition({
+                      [field]: Math.round(Number(event.target.value))
+                    })}
+                  />
+                </label>
+              ))}
+              {selectedLibraryDefinition ? (
+                <button
+                  type="button"
+                  disabled={isSaving}
+                  onClick={() => void editEmbeddedDefinition({
+                    name: selectedLibraryDefinition.name,
+                    widthMm: selectedLibraryDefinition.widthMm,
+                    depthMm: selectedLibraryDefinition.depthMm,
+                    heightMm: selectedLibraryDefinition.heightMm
+                  })}
+                >
+                  Update from Item Library
+                </button>
+              ) : null}
+              <button
+                type="button"
+                disabled={isSaving}
+                onClick={() => void commit(
+                  workspace.makeFurniturePlacementUnique(selectedFurniture.id)
+                )}
+              >
+                Make unique
+              </button>
+              <button
+                type="button"
+                className="danger-button"
+                disabled={isSaving}
+                onClick={async () => {
+                  if (await commit(
+                    workspace.deleteFurniturePlacement(selectedFurniture.id)
+                  )) {
+                    setSelectedFurnitureId(undefined);
+                  }
+                }}
+              >
+                Delete Furniture Placement
+              </button>
             </div>
           ) : null}
         </section>

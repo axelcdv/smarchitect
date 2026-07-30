@@ -1,4 +1,8 @@
 export {
+  furnitureFootprintCorners,
+  furniturePlacementContainsPoint
+} from "./furniture-geometry.js";
+export {
   ProjectValidationError,
   ProjectWorkspace,
   createProjectDocument
@@ -29,6 +33,11 @@ export {
   type DiagnosticSeverity,
   type EntityKind,
   type ExtensionData,
+  type FurnitureDefinition,
+  type FurnitureDefinitionUpdate,
+  type FurniturePlacement,
+  type FurniturePlacementInput,
+  type FurniturePlacementUpdate,
   type IdFactory,
   type Level,
   type MeasurementUnits,

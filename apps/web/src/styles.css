@@ -202,7 +202,7 @@ h2 {
 .workspace-grid {
   display: grid;
   min-height: calc(100vh - 112px);
-  grid-template-columns: 260px minmax(480px, 1fr) minmax(340px, 0.65fr);
+  grid-template-columns: 300px minmax(480px, 1fr) minmax(340px, 0.65fr);
 }
 
 .project-panel,
@@ -352,6 +352,19 @@ h2 {
   stroke-width: 18;
 }
 
+.furniture-footprint {
+  fill: rgb(49 95 76 / 34%);
+  pointer-events: none;
+  stroke: var(--green);
+  stroke-width: 14;
+}
+
+.selected-furniture {
+  fill: rgb(217 87 63 / 38%);
+  stroke: var(--accent);
+  stroke-width: 24;
+}
+
 .plan-toolbar {
   display: flex;
   align-items: center;
@@ -367,10 +380,13 @@ h2 {
 }
 
 .plan-toolbar span {
-  margin-right: auto;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 11px;
+}
+
+.plan-toolbar .plan-count {
+  margin-left: auto;
 }
 
 .plan-toolbar .tool-active {
@@ -379,7 +395,8 @@ h2 {
   color: white;
 }
 
-.wall-properties {
+.wall-properties,
+.furniture-properties {
   display: grid;
   grid-template-columns: repeat(4, minmax(100px, 1fr));
   gap: 10px;
@@ -389,20 +406,97 @@ h2 {
   background: var(--paper);
 }
 
-.wall-properties label {
+.wall-properties label,
+.furniture-properties label {
   display: grid;
   gap: 4px;
 }
 
-.wall-properties label span {
+.wall-properties label span,
+.furniture-properties label span {
   color: var(--muted);
   font-size: 10px;
 }
 
-.wall-properties input {
+.wall-properties input,
+.furniture-properties input {
   min-width: 0;
   border: 1px solid var(--line);
   padding: 7px;
+}
+
+.furniture-properties {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(100px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.furniture-properties h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.item-library {
+  margin-top: 26px;
+  padding-top: 24px;
+  border-top: 1px solid var(--line);
+}
+
+.library-history-actions {
+  display: flex;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.furniture-definition-form,
+.library-card {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.furniture-definition-form label:first-child,
+.library-card label:first-child,
+.furniture-definition-form button,
+.library-actions {
+  grid-column: 1 / -1;
+}
+
+.furniture-definition-form label,
+.library-card label {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.furniture-definition-form span,
+.library-card span {
+  color: var(--muted);
+  font-size: 9px;
+  text-transform: capitalize;
+}
+
+.furniture-definition-form input,
+.library-card input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  padding: 6px;
+}
+
+.library-card {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.library-actions {
+  display: flex;
+  gap: 7px;
 }
 
 .danger-button {

@@ -39,14 +39,19 @@ function schemaErrorCode(error: ErrorObject): string {
     error.keyword === "pattern" &&
     (path === "/id" ||
       path === "/activeLevelId" ||
-      /^\/levels\/\d+\/id$/.test(path))
+      /^\/levels\/\d+\/id$/.test(path) ||
+      /^\/furnitureDefinitions\/\d+\/id$/.test(path) ||
+      /^\/levels\/\d+\/furniturePlacements\/\d+\/(id|definitionId)$/.test(path))
   ) {
     return "stable-id.invalid";
   }
 
   if (
     error.keyword === "exclusiveMinimum" &&
-    /^\/levels\/\d+\/defaultWallHeightMm$/.test(path)
+    (
+      /^\/levels\/\d+\/defaultWallHeightMm$/.test(path) ||
+      /^\/furnitureDefinitions\/\d+\/(widthMm|depthMm|heightMm)$/.test(path)
+    )
   ) {
     return "dimension.non-positive";
   }
@@ -68,6 +73,19 @@ function schemaDiagnostics(): Diagnostic[] {
 function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const levelIds = new Set<string>();
+  const definitionIds = new Set<string>();
+
+  for (const [index, definition] of (document.furnitureDefinitions ?? []).entries()) {
+    if (definitionIds.has(definition.id)) {
+      diagnostics.push({
+        code: "furniture-definition.id.duplicate",
+        severity: "error",
+        path: `/furnitureDefinitions/${index}/id`,
+        message: `Furniture Definition ID "${definition.id}" must be unique within the Project Document.`
+      });
+    }
+    definitionIds.add(definition.id);
+  }
 
   for (const [index, level] of document.levels.entries()) {
     if (levelIds.has(level.id)) {
@@ -90,6 +108,27 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
           severity: "error",
           path: `/levels/${index}/walls/${wallIndex}/path/end`,
           message: "Wall path must have distinct start and end points."
+        });
+      }
+    }
+
+    const placementIds = new Set<string>();
+    for (const [placementIndex, placement] of (level.furniturePlacements ?? []).entries()) {
+      if (placementIds.has(placement.id)) {
+        diagnostics.push({
+          code: "furniture-placement.id.duplicate",
+          severity: "error",
+          path: `/levels/${index}/furniturePlacements/${placementIndex}/id`,
+          message: `Furniture Placement ID "${placement.id}" must be unique within its Level.`
+        });
+      }
+      placementIds.add(placement.id);
+      if (!definitionIds.has(placement.definitionId)) {
+        diagnostics.push({
+          code: "furniture-placement.definition.missing",
+          severity: "error",
+          path: `/levels/${index}/furniturePlacements/${placementIndex}/definitionId`,
+          message: `Furniture Definition "${placement.definitionId}" is not embedded in the Project Document.`
         });
       }
     }
@@ -204,9 +243,10 @@ export function parseProjectDocument(
     };
   }
 
-  const value: unknown = yamlDocument.toJS({
+  const parsedValue: unknown = yamlDocument.toJS({
     maxAliasCount: 0
   });
+  const value = addCompatibleFurnitureCollections(parsedValue);
   const diagnostics = validateProjectDocument(value);
 
   if (diagnostics.length) {
@@ -217,4 +257,24 @@ export function parseProjectDocument(
     document: value as ProjectDocument,
     diagnostics: []
   };
+}
+
+function addCompatibleFurnitureCollections(value: unknown): unknown {
+  if (
+    typeof value !== "object"
+    || value === null
+    || !("schemaVersion" in value)
+    || value.schemaVersion !== CURRENT_SCHEMA_VERSION
+  ) {
+    return value;
+  }
+  const compatible = structuredClone(value) as {
+    furnitureDefinitions?: unknown[];
+    levels?: Array<{ furniturePlacements?: unknown[] }>;
+  };
+  compatible.furnitureDefinitions ??= [];
+  for (const level of compatible.levels ?? []) {
+    level.furniturePlacements ??= [];
+  }
+  return compatible;
 }
