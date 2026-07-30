@@ -435,6 +435,39 @@ describe("minimal Project Workspace", () => {
       .toHaveValue(600));
   });
 
+  it("undoes Item Library changes in chronological order across tabs", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Combined library history" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Combined library history" });
+
+    fireEvent.change(screen.getByLabelText("New Furniture name"), {
+      target: { value: "Chair" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Furniture" }));
+    await screen.findByLabelText("Chair name");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Fixtures" }));
+    fireEvent.change(screen.getByLabelText("New Fixture name"), {
+      target: { value: "Radiator" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Fixture" }));
+    await screen.findByLabelText("Radiator name");
+
+    fireEvent.click(screen.getByRole("tab", { name: "Furniture" }));
+    fireEvent.click(screen.getByRole("button", { name: "Undo Item Library" }));
+    expect(await screen.findByLabelText("Chair name")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("tab", { name: "Fixtures" }));
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Radiator name")).not.toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Redo Item Library" }));
+    expect(await screen.findByLabelText("Radiator name")).toBeInTheDocument();
+  });
+
   it("rejects invalid Item Library dimensions at the browser acceptance seam", async () => {
     render(<App />);
     fireEvent.change(screen.getByLabelText("Project name"), {
@@ -541,5 +574,49 @@ describe("minimal Project Workspace", () => {
     expect(await screen.findByText("0 Fixture Placements")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(await screen.findByText("1 Fixture Placement")).toBeInTheDocument();
+  });
+
+  it("keeps Opening and Fixture selection mutually exclusive in both orders", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Exclusive selection" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByText("1 wall");
+    fireEvent.click(screen.getByRole("button", { name: "Add door" }));
+    await screen.findByRole("button", { name: "Door opening" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Fixtures" }));
+    fireEvent.change(screen.getByLabelText("New Fixture name"), {
+      target: { value: "Radiator" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Fixture" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Place" }));
+    fireEvent.pointerDown(plan, { clientX: 600, clientY: 260 });
+    await screen.findByLabelText("Fixture rotation (deg)");
+
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Door opening" }), {
+      clientX: 205,
+      clientY: 260
+    });
+    expect(await screen.findByLabelText("Opening position (mm)"))
+      .toBeInTheDocument();
+    expect(screen.queryByLabelText("Fixture rotation (deg)"))
+      .not.toBeInTheDocument();
+
+    fireEvent.pointerDown(plan, { clientX: 600, clientY: 260 });
+    expect(await screen.findByLabelText("Fixture rotation (deg)"))
+      .toBeInTheDocument();
+    expect(screen.queryByLabelText("Opening position (mm)"))
+      .not.toBeInTheDocument();
   });
 });

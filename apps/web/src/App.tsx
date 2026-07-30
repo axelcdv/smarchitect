@@ -254,6 +254,7 @@ export function App() {
       setSelectedFurnitureId(undefined);
       setSelectedWallId(undefined);
       setSelectedRoomLabelId(undefined);
+      setSelectedOpeningId(undefined);
       setGesture({
         kind: "fixtureMove",
         placementId: fixture.id,
@@ -882,6 +883,7 @@ export function App() {
                     setSelectedWallId(opening.hostWallId);
                     setSelectedRoomLabelId(undefined);
                     setSelectedFurnitureId(undefined);
+                    setSelectedFixtureId(undefined);
                     setMode("select");
                     setGesture({
                       kind: "opening",

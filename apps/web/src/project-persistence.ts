@@ -11,6 +11,7 @@ const DATABASE_VERSION = 2;
 const PROJECT_STORE = "active-project";
 const ACTIVE_PROJECT_KEY = "active";
 const ITEM_LIBRARY_STORE = "item-library";
+const ITEM_LIBRARY_KEY = "items";
 const FURNITURE_LIBRARY_KEY = "furniture";
 const FIXTURE_LIBRARY_KEY = "fixtures";
 
@@ -70,50 +71,87 @@ async function openDatabase(): Promise<IDBDatabase> {
   return requestResult(request);
 }
 
-interface DefinitionLibraryHistorySnapshot<T> {
+export type ItemKind = "furniture" | "fixture";
+
+export interface ItemLibraryHistoryEntry {
+  kind: ItemKind | "initial";
+  furnitureDefinitions: FurnitureDefinition[];
+  fixtureDefinitions: FixtureDefinition[];
+}
+
+export interface ItemLibraryHistorySnapshot {
+  entries: ItemLibraryHistoryEntry[];
+  cursor: number;
+}
+
+export interface ItemLibraryRepository {
+  load(): Promise<ItemLibraryHistorySnapshot | undefined>;
+  save(snapshot: ItemLibraryHistorySnapshot): Promise<void>;
+}
+
+interface LegacyDefinitionLibraryHistorySnapshot<T> {
   entries: T[][];
   cursor: number;
 }
 
-interface DefinitionLibraryRepository<T> {
-  load(): Promise<DefinitionLibraryHistorySnapshot<T> | undefined>;
-  save(snapshot: DefinitionLibraryHistorySnapshot<T>): Promise<void>;
+function currentLegacyDefinitions<T>(
+  stored: LegacyDefinitionLibraryHistorySnapshot<T> | T[] | undefined
+): T[] {
+  if (!stored) return [];
+  if (Array.isArray(stored)) return stored;
+  return stored.entries[stored.cursor] ?? [];
 }
 
-class IndexedDbDefinitionLibraryRepository<T>
-implements DefinitionLibraryRepository<T> {
-  readonly #key: string;
-  readonly #migrateLegacyArray: boolean;
-
-  constructor(key: string, migrateLegacyArray = false) {
-    this.#key = key;
-    this.#migrateLegacyArray = migrateLegacyArray;
-  }
-
-  async load(): Promise<DefinitionLibraryHistorySnapshot<T> | undefined> {
+export class IndexedDbItemLibraryRepository implements ItemLibraryRepository {
+  async load(): Promise<ItemLibraryHistorySnapshot | undefined> {
     const database = await openDatabase();
     try {
       const transaction = database.transaction(ITEM_LIBRARY_STORE, "readonly");
-      const stored = await requestResult<
-        DefinitionLibraryHistorySnapshot<T> | T[] | undefined
-      >(transaction.objectStore(ITEM_LIBRARY_STORE).get(this.#key));
-      if (!stored) return undefined;
-      if (this.#migrateLegacyArray && Array.isArray(stored)) {
-        return { entries: [[], structuredClone(stored)], cursor: 1 };
+      const store = transaction.objectStore(ITEM_LIBRARY_STORE);
+      const combinedRequest = store.get(ITEM_LIBRARY_KEY);
+      const furnitureRequest = store.get(FURNITURE_LIBRARY_KEY);
+      const fixtureRequest = store.get(FIXTURE_LIBRARY_KEY);
+      const [combined, furniture, fixtures] = await Promise.all([
+        requestResult<ItemLibraryHistorySnapshot | undefined>(combinedRequest),
+        requestResult<
+          LegacyDefinitionLibraryHistorySnapshot<FurnitureDefinition>
+          | FurnitureDefinition[]
+          | undefined
+        >(furnitureRequest),
+        requestResult<
+          LegacyDefinitionLibraryHistorySnapshot<FixtureDefinition>
+          | FixtureDefinition[]
+          | undefined
+        >(fixtureRequest)
+      ]);
+      if (combined) return structuredClone(combined);
+      if (furniture || fixtures) {
+        return {
+          entries: [{
+            kind: "initial",
+            furnitureDefinitions: structuredClone(
+              currentLegacyDefinitions(furniture)
+            ),
+            fixtureDefinitions: structuredClone(
+              currentLegacyDefinitions(fixtures)
+            )
+          }],
+          cursor: 0
+        };
       }
-      return structuredClone(stored as DefinitionLibraryHistorySnapshot<T>);
+      return undefined;
     } finally {
       database.close();
     }
   }
 
-  async save(snapshot: DefinitionLibraryHistorySnapshot<T>): Promise<void> {
+  async save(snapshot: ItemLibraryHistorySnapshot): Promise<void> {
     const database = await openDatabase();
     try {
       const transaction = database.transaction(ITEM_LIBRARY_STORE, "readwrite");
       transaction.objectStore(ITEM_LIBRARY_STORE).put(
         structuredClone(snapshot),
-        this.#key
+        ITEM_LIBRARY_KEY
       );
       await transactionCompletion(transaction);
     } finally {
@@ -122,43 +160,51 @@ implements DefinitionLibraryRepository<T> {
   }
 }
 
-class AutosavedDefinitionLibrary<T> {
-  readonly #repository: DefinitionLibraryRepository<T>;
-  #entries: T[][];
+export class AutosavedItemLibrary {
+  readonly #repository: ItemLibraryRepository;
+  #entries: ItemLibraryHistoryEntry[];
   #cursor: number;
   #pendingTransition: Promise<void> = Promise.resolve();
 
   private constructor(
-    snapshot: DefinitionLibraryHistorySnapshot<T>,
-    repository: DefinitionLibraryRepository<T>
+    snapshot: ItemLibraryHistorySnapshot,
+    repository: ItemLibraryRepository
   ) {
     this.#entries = structuredClone(snapshot.entries);
     this.#cursor = snapshot.cursor;
     this.#repository = repository;
   }
 
-  static async restore<T>(
-    repository: DefinitionLibraryRepository<T>
-  ): Promise<AutosavedDefinitionLibrary<T> | undefined> {
+  static async restore(
+    repository: ItemLibraryRepository
+  ): Promise<AutosavedItemLibrary | undefined> {
     const snapshot = await repository.load();
     return snapshot
-      ? new AutosavedDefinitionLibrary(snapshot, repository)
+      ? new AutosavedItemLibrary(snapshot, repository)
       : undefined;
   }
 
-  static async create<T>(
-    repository: DefinitionLibraryRepository<T>
-  ): Promise<AutosavedDefinitionLibrary<T>> {
-    const library = new AutosavedDefinitionLibrary<T>({
-      entries: [[]],
+  static async create(
+    repository: ItemLibraryRepository
+  ): Promise<AutosavedItemLibrary> {
+    const library = new AutosavedItemLibrary({
+      entries: [{
+        kind: "initial",
+        furnitureDefinitions: [],
+        fixtureDefinitions: []
+      }],
       cursor: 0
     }, repository);
     await repository.save(library.snapshot());
     return library;
   }
 
-  get definitions(): T[] {
-    return structuredClone(this.#entries[this.#cursor] ?? []);
+  get furnitureDefinitions(): FurnitureDefinition[] {
+    return structuredClone(this.#currentEntry().furnitureDefinitions);
+  }
+
+  get fixtureDefinitions(): FixtureDefinition[] {
+    return structuredClone(this.#currentEntry().fixtureDefinitions);
   }
 
   get canUndo(): boolean {
@@ -169,50 +215,67 @@ class AutosavedDefinitionLibrary<T> {
     return this.#cursor < this.#entries.length - 1;
   }
 
-  snapshot(): DefinitionLibraryHistorySnapshot<T> {
+  snapshot(): ItemLibraryHistorySnapshot {
     return {
       entries: structuredClone(this.#entries),
       cursor: this.#cursor
     };
   }
 
-  async accept(definitions: T[]): Promise<T[]> {
-    const accepted = structuredClone(definitions);
-    return this.transact(() => accepted);
+  async transactFurniture(
+    transition: (definitions: FurnitureDefinition[]) => FurnitureDefinition[]
+  ): Promise<ItemLibraryHistoryEntry> {
+    return this.#transact("furniture", (entry) => {
+      entry.furnitureDefinitions = transition(entry.furnitureDefinitions);
+    });
   }
 
-  async transact(transition: (definitions: T[]) => T[]): Promise<T[]> {
+  async transactFixture(
+    transition: (definitions: FixtureDefinition[]) => FixtureDefinition[]
+  ): Promise<ItemLibraryHistoryEntry> {
+    return this.#transact("fixture", (entry) => {
+      entry.fixtureDefinitions = transition(entry.fixtureDefinitions);
+    });
+  }
+
+  #transact(
+    kind: ItemKind,
+    transition: (entry: ItemLibraryHistoryEntry) => void
+  ): Promise<ItemLibraryHistoryEntry> {
     return this.#enqueue((candidate) => {
-      const current = structuredClone(candidate.entries[candidate.cursor] ?? []);
-      const accepted = structuredClone(transition(current));
+      const current = structuredClone(
+        candidate.entries[candidate.cursor] ?? this.#emptyEntry()
+      );
+      transition(current);
+      current.kind = kind;
       candidate.entries = candidate.entries.slice(0, candidate.cursor + 1);
-      candidate.entries.push(accepted);
+      candidate.entries.push(current);
       candidate.cursor += 1;
     });
   }
 
-  async undo(): Promise<T[]> {
+  async undo(): Promise<ItemLibraryHistoryEntry> {
     return this.#enqueue((candidate) => {
       if (candidate.cursor > 0) candidate.cursor -= 1;
     });
   }
 
-  async redo(): Promise<T[]> {
+  async redo(): Promise<ItemLibraryHistoryEntry> {
     return this.#enqueue((candidate) => {
       if (candidate.cursor < candidate.entries.length - 1) candidate.cursor += 1;
     });
   }
 
   #enqueue(
-    transition: (snapshot: DefinitionLibraryHistorySnapshot<T>) => void
-  ): Promise<T[]> {
+    transition: (snapshot: ItemLibraryHistorySnapshot) => void
+  ): Promise<ItemLibraryHistoryEntry> {
     const operation = this.#pendingTransition.then(async () => {
       const candidate = this.snapshot();
       transition(candidate);
       await this.#repository.save(candidate);
       this.#entries = candidate.entries;
       this.#cursor = candidate.cursor;
-      return this.definitions;
+      return structuredClone(this.#currentEntry());
     });
     this.#pendingTransition = operation.then(
       () => undefined,
@@ -220,35 +283,19 @@ class AutosavedDefinitionLibrary<T> {
     );
     return operation;
   }
-}
 
-export type FurnitureLibraryHistorySnapshot =
-  DefinitionLibraryHistorySnapshot<FurnitureDefinition>;
-export type FurnitureLibraryRepository =
-  DefinitionLibraryRepository<FurnitureDefinition>;
-export class IndexedDbFurnitureLibraryRepository
-  extends IndexedDbDefinitionLibraryRepository<FurnitureDefinition> {
-  constructor() {
-    super(FURNITURE_LIBRARY_KEY, true);
+  #currentEntry(): ItemLibraryHistoryEntry {
+    return this.#entries[this.#cursor] ?? this.#emptyEntry();
+  }
+
+  #emptyEntry(): ItemLibraryHistoryEntry {
+    return {
+      kind: "initial",
+      furnitureDefinitions: [],
+      fixtureDefinitions: []
+    };
   }
 }
-export type AutosavedFurnitureLibrary =
-  AutosavedDefinitionLibrary<FurnitureDefinition>;
-export const AutosavedFurnitureLibrary = AutosavedDefinitionLibrary;
-
-export type FixtureLibraryHistorySnapshot =
-  DefinitionLibraryHistorySnapshot<FixtureDefinition>;
-export type FixtureLibraryRepository =
-  DefinitionLibraryRepository<FixtureDefinition>;
-export class IndexedDbFixtureLibraryRepository
-  extends IndexedDbDefinitionLibraryRepository<FixtureDefinition> {
-  constructor() {
-    super(FIXTURE_LIBRARY_KEY);
-  }
-}
-export type AutosavedFixtureLibrary =
-  AutosavedDefinitionLibrary<FixtureDefinition>;
-export const AutosavedFixtureLibrary = AutosavedDefinitionLibrary;
 
 export class IndexedDbProjectRepository implements ProjectRepository {
   async load(): Promise<ProjectHistorySnapshot | undefined> {

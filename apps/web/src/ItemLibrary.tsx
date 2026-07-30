@@ -48,9 +48,7 @@ export function ItemLibrary({
   const definitions: Definition[] = kind === "furniture"
     ? controller.furnitureDefinitions
     : controller.fixtureDefinitions;
-  const history = kind === "furniture"
-    ? controller.furnitureHistory
-    : controller.fixtureHistory;
+  const history = controller.history;
 
   useEffect(() => {
     setDrafts(Object.fromEntries(
@@ -102,14 +100,14 @@ export function ItemLibrary({
         <button
           type="button"
           disabled={!history.canUndo}
-          onClick={() => void controller.navigate(kind, "undo")}
+          onClick={() => void controller.navigate("undo")}
         >
           Undo Item Library
         </button>
         <button
           type="button"
           disabled={!history.canRedo}
-          onClick={() => void controller.navigate(kind, "redo")}
+          onClick={() => void controller.navigate("redo")}
         >
           Redo Item Library
         </button>

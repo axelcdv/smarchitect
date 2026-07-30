@@ -7,13 +7,13 @@ import {
 } from "@smarchitect/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  AutosavedItemLibrary,
   AutosavedProject,
-  AutosavedFurnitureLibrary,
-  IndexedDbFurnitureLibraryRepository,
+  IndexedDbItemLibraryRepository,
   IndexedDbProjectRepository,
   SerializedProjectRepository,
-  type FurnitureLibraryHistorySnapshot,
-  type FurnitureLibraryRepository,
+  type ItemLibraryHistorySnapshot,
+  type ItemLibraryRepository,
   type ProjectRepository
 } from "./project-persistence.js";
 
@@ -29,14 +29,14 @@ class MemoryProjectRepository implements ProjectRepository {
   }
 }
 
-class MemoryFurnitureLibraryRepository implements FurnitureLibraryRepository {
-  snapshot?: FurnitureLibraryHistorySnapshot;
+class MemoryItemLibraryRepository implements ItemLibraryRepository {
+  snapshot?: ItemLibraryHistorySnapshot;
 
-  async load(): Promise<FurnitureLibraryHistorySnapshot | undefined> {
+  async load(): Promise<ItemLibraryHistorySnapshot | undefined> {
     return this.snapshot ? structuredClone(this.snapshot) : undefined;
   }
 
-  async save(snapshot: FurnitureLibraryHistorySnapshot): Promise<void> {
+  async save(snapshot: ItemLibraryHistorySnapshot): Promise<void> {
     this.snapshot = structuredClone(snapshot);
   }
 }
@@ -52,9 +52,9 @@ function deleteTestDatabase(): Promise<void> {
 beforeEach(deleteTestDatabase);
 
 describe("autosaved project recovery", () => {
-  it("persists reusable Furniture Definitions independently of a project", async () => {
-    const repository = new IndexedDbFurnitureLibraryRepository();
-    const definitions = [{
+  it("persists one chronological Item Library history across item kinds", async () => {
+    const repository = new IndexedDbItemLibraryRepository();
+    const furniture = [{
       id: "furniture_definition_00000000-0000-4000-8000-000000000005",
       name: "Sofa",
       widthMm: 2200,
@@ -62,25 +62,43 @@ describe("autosaved project recovery", () => {
       heightMm: 850,
       extensions: {}
     }];
+    const fixtures = [{
+      id: "fixture_definition_00000000-0000-4000-8000-000000000006",
+      name: "Radiator",
+      widthMm: 1000,
+      depthMm: 150,
+      heightMm: 600,
+      extensions: {}
+    }];
 
-    let library = await AutosavedFurnitureLibrary.create(repository);
-    await library.accept(definitions);
-    library = (await AutosavedFurnitureLibrary.restore(
-      new IndexedDbFurnitureLibraryRepository()
+    let library = await AutosavedItemLibrary.create(repository);
+    await library.transactFurniture(() => furniture);
+    await library.transactFixture(() => fixtures);
+    library = (await AutosavedItemLibrary.restore(
+      new IndexedDbItemLibraryRepository()
     ))!;
-    expect(library.definitions).toEqual(definitions);
+    expect(library.furnitureDefinitions).toEqual(furniture);
+    expect(library.fixtureDefinitions).toEqual(fixtures);
     expect(library.canUndo).toBe(true);
-    expect(await library.undo()).toEqual([]);
-    library = (await AutosavedFurnitureLibrary.restore(
-      new IndexedDbFurnitureLibraryRepository()
+    expect(await library.undo()).toMatchObject({
+      kind: "furniture",
+      furnitureDefinitions: furniture,
+      fixtureDefinitions: []
+    });
+    library = (await AutosavedItemLibrary.restore(
+      new IndexedDbItemLibraryRepository()
     ))!;
     expect(library.canRedo).toBe(true);
-    expect(await library.redo()).toEqual(definitions);
+    expect(await library.redo()).toMatchObject({
+      kind: "fixture",
+      furnitureDefinitions: furniture,
+      fixtureDefinitions: fixtures
+    });
   });
 
   it("serializes concurrent Item Library transactions without losing edits", async () => {
-    const repository = new MemoryFurnitureLibraryRepository();
-    const library = await AutosavedFurnitureLibrary.create(repository);
+    const repository = new MemoryItemLibraryRepository();
+    const library = await AutosavedItemLibrary.create(repository);
     const sofa = {
       id: "furniture_definition_00000000-0000-4000-8000-000000000005",
       name: "Sofa",
@@ -96,11 +114,15 @@ describe("autosaved project recovery", () => {
       widthMm: 750
     };
 
-    const addingSofa = library.transact((definitions) => [...definitions, sofa]);
-    const addingChair = library.transact((definitions) => [...definitions, chair]);
+    const addingSofa = library.transactFurniture(
+      (definitions) => [...definitions, sofa]
+    );
+    const addingChair = library.transactFurniture(
+      (definitions) => [...definitions, chair]
+    );
     await Promise.all([addingSofa, addingChair]);
 
-    expect(library.definitions).toEqual([sofa, chair]);
+    expect(library.furnitureDefinitions).toEqual([sofa, chair]);
     expect(library.snapshot().entries).toHaveLength(3);
   });
 
