@@ -6,6 +6,8 @@ import {
   type EntityKind,
   type IdFactory,
   type Level,
+  type OpeningInput,
+  type OpeningUpdate,
   type PointMm,
   type ProjectDocument,
   type WallInput,
@@ -50,6 +52,7 @@ export function createProjectDocument(
     baseElevationMm: 0,
     defaultWallHeightMm: DEFAULT_WALL_HEIGHT_MM,
     walls: [],
+    openings: [],
     extensions: {}
   };
   const document: ProjectDocument = {
@@ -217,6 +220,42 @@ export class ProjectWorkspace {
       const count = level.walls.length;
       level.walls = level.walls.filter((wall) => wall.id !== id);
       if (level.walls.length === count) throw new Error(`Wall "${id}" does not exist.`);
+    });
+  }
+
+  addOpening(input: OpeningInput): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      level.openings.push({
+        ...structuredClone(input),
+        id: this.#idFactory("opening"),
+        extensions: {}
+      });
+    });
+  }
+
+  updateOpening(id: string, update: OpeningUpdate): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const opening = level.openings.find((candidate) => candidate.id === id);
+      if (!opening) throw new Error(`Opening "${id}" does not exist.`);
+      Object.assign(opening, structuredClone(update));
+    });
+  }
+
+  moveOpening(id: string, deltaMm: number): ProjectWorkspace {
+    const opening = this.activeLevel.openings.find((candidate) => candidate.id === id);
+    if (!opening) throw new Error(`Opening "${id}" does not exist.`);
+    return this.updateOpening(id, {
+      positionMm: opening.positionMm + Math.round(deltaMm)
+    });
+  }
+
+  deleteOpening(id: string): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const count = level.openings.length;
+      level.openings = level.openings.filter((opening) => opening.id !== id);
+      if (level.openings.length === count) {
+        throw new Error(`Opening "${id}" does not exist.`);
+      }
     });
   }
 

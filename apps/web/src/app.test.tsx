@@ -126,6 +126,57 @@ describe("minimal Project Workspace", () => {
     expect(await screen.findByText("0 walls")).toBeInTheDocument();
   });
 
+  it("adds, graphically moves, edits, deletes, and restores Opening types", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Opening editor" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByText("1 wall");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add door" }));
+    expect(await screen.findByText("1 opening")).toBeInTheDocument();
+    expect(screen.getByLabelText("Opening type")).toHaveValue("door");
+    expect(screen.getByLabelText("Door operation")).toHaveValue("hinged");
+
+    fireEvent.change(screen.getByLabelText("Door operation"), {
+      target: { value: "sliding" }
+    });
+    await waitFor(() => expect(screen.getByLabelText("Door operation"))
+      .toHaveValue("sliding"));
+    fireEvent.change(screen.getByLabelText("Slide direction"), {
+      target: { value: "end" }
+    });
+    await waitFor(() => expect(screen.getByLabelText("Slide direction"))
+      .toHaveValue("end"));
+    fireEvent.pointerDown(screen.getByRole("button", { name: "Door opening" }), {
+      clientX: 205,
+      clientY: 260
+    });
+    fireEvent.pointerUp(plan, { clientX: 225, clientY: 260 });
+    await waitFor(() => expect(screen.getByLabelText("Opening position (mm)"))
+      .toHaveValue(1250));
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete opening" }));
+    expect(await screen.findByText("0 openings")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByText("1 opening")).toBeInTheDocument();
+    expect((screen.getByLabelText("Project Document YAML") as HTMLTextAreaElement)
+      .value).toContain("slideDirection: end");
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    expect(await screen.findByText("0 openings")).toBeInTheDocument();
+  });
+
   it("imports a Project Document and exports it as YAML", async () => {
     const yaml = ProjectWorkspace.create("Imported apartment").exportYaml();
     const file = new File([yaml], "apartment.yaml", {

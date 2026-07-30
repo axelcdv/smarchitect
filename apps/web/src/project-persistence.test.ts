@@ -91,6 +91,64 @@ describe("autosaved project recovery", () => {
     }
   });
 
+  it("persists Opening operations and their Undo/Redo states across reloads", async () => {
+    const repository = new SerializedProjectRepository(
+      new IndexedDbProjectRepository()
+    );
+    let project = await AutosavedProject.create(
+      ProjectWorkspace.create("Persistent openings").addWall({
+        start: { x: 0, y: 0 },
+        end: { x: 4000, y: 0 },
+        heightMm: 2800
+      }),
+      repository
+    );
+    const wallId = project.workspace.activeLevel.walls[0]!.id;
+    const states = [project.workspace.exportYaml()];
+
+    await project.accept(project.workspace.addOpening({
+      kind: "door",
+      hostWallId: wallId,
+      positionMm: 400,
+      widthMm: 900,
+      heightMm: 2100,
+      operation: {
+        kind: "hinged",
+        hingeSide: "start",
+        swingDirection: "inward"
+      }
+    }));
+    states.push(project.workspace.exportYaml());
+    project = (await AutosavedProject.restore(repository))!;
+    const openingId = project.workspace.activeLevel.openings[0]!.id;
+
+    await project.accept(project.workspace.updateOpening(openingId, {
+      widthMm: 1000,
+      operation: { kind: "sliding", slideDirection: "end" }
+    }));
+    states.push(project.workspace.exportYaml());
+    project = (await AutosavedProject.restore(repository))!;
+
+    await project.accept(project.workspace.moveOpening(openingId, 500));
+    states.push(project.workspace.exportYaml());
+    project = (await AutosavedProject.restore(repository))!;
+
+    await project.accept(project.workspace.deleteOpening(openingId));
+    states.push(project.workspace.exportYaml());
+    project = (await AutosavedProject.restore(repository))!;
+
+    for (let index = states.length - 2; index >= 0; index -= 1) {
+      expect((await project.undo()).exportYaml()).toBe(states[index]);
+      project = (await AutosavedProject.restore(repository))!;
+      expect(project.workspace.exportYaml()).toBe(states[index]);
+    }
+    for (let index = 1; index < states.length; index += 1) {
+      expect((await project.redo()).exportYaml()).toBe(states[index]);
+      project = (await AutosavedProject.restore(repository))!;
+      expect(project.workspace.exportYaml()).toBe(states[index]);
+    }
+  });
+
   it("keeps state unchanged and surfaces a persistence failure", async () => {
     const storage = new MemoryProjectRepository();
     let rejectWrites = false;

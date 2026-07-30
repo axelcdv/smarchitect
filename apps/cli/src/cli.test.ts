@@ -13,6 +13,7 @@ levels:
     baseElevationMm: 0
     defaultWallHeightMm: 2500
     walls: []
+    openings: []
     extensions: {}
 extensions: {}
 `;

@@ -11,6 +11,7 @@ export interface Level {
   baseElevationMm: number;
   defaultWallHeightMm: number;
   walls: Wall[];
+  openings: Opening[];
   extensions: ExtensionData;
 }
 
@@ -49,6 +50,66 @@ export interface WallUpdate {
   heightMm?: number;
 }
 
+export type PathDirection = "start" | "end";
+export type SwingDirection = "inward" | "outward";
+
+export interface HingedOperation {
+  kind: "hinged";
+  hingeSide: PathDirection;
+  swingDirection: SwingDirection;
+}
+
+export interface SlidingOperation {
+  kind: "sliding";
+  slideDirection: PathDirection;
+}
+
+export interface FixedOperation {
+  kind: "fixed";
+}
+
+interface OpeningBase {
+  id: string;
+  hostWallId: string;
+  positionMm: number;
+  widthMm: number;
+  heightMm: number;
+  extensions: ExtensionData;
+}
+
+export interface DoorOpening extends OpeningBase {
+  kind: "door";
+  operation: HingedOperation | SlidingOperation;
+}
+
+export interface WindowOpening extends OpeningBase {
+  kind: "window";
+  sillHeightMm: number;
+  operation: FixedOperation | HingedOperation | SlidingOperation;
+}
+
+export interface PassageOpening extends OpeningBase {
+  kind: "passage";
+}
+
+export type Opening = DoorOpening | WindowOpening | PassageOpening;
+
+type NewOpening<T extends Opening> = Omit<T, "id" | "extensions">;
+
+export type OpeningInput =
+  | NewOpening<DoorOpening>
+  | NewOpening<WindowOpening>
+  | NewOpening<PassageOpening>;
+
+export interface OpeningUpdate {
+  hostWallId?: string;
+  positionMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  sillHeightMm?: number;
+  operation?: FixedOperation | HingedOperation | SlidingOperation;
+}
+
 export interface WallJunction {
   point: PointMm;
   wallIds: string[];
@@ -78,7 +139,7 @@ export interface ParseProjectDocumentResult {
   diagnostics: Diagnostic[];
 }
 
-export type EntityKind = "project" | "level" | "wall";
+export type EntityKind = "project" | "level" | "wall" | "opening";
 export type IdFactory = (kind: EntityKind) => string;
 
 export interface CreateProjectDocumentOptions {

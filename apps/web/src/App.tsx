@@ -9,6 +9,8 @@ import {
   snapPoint,
   snapWallDelta,
   wallAngleDeg,
+  type Opening,
+  type OpeningUpdate,
   type PointMm,
   type Wall
 } from "@smarchitect/core";
@@ -30,6 +32,31 @@ import "./styles.css";
 type WallEditField =
   | "startX" | "startY" | "endX" | "endY"
   | "lengthMm" | "angleDeg" | "thicknessMm" | "heightMm";
+
+type OpeningEditField = "positionMm" | "widthMm" | "heightMm" | "sillHeightMm";
+
+function wallLength(wall: Wall): number {
+  return Math.hypot(
+    wall.path.end.x - wall.path.start.x,
+    wall.path.end.y - wall.path.start.y
+  );
+}
+
+function pointAlongWall(wall: Wall, distanceMm: number): PointMm {
+  const length = wallLength(wall);
+  return {
+    x: wall.path.start.x + (wall.path.end.x - wall.path.start.x) * distanceMm / length,
+    y: wall.path.start.y + (wall.path.end.y - wall.path.start.y) * distanceMm / length
+  };
+}
+
+function distanceAlongWall(wall: Wall, point: PointMm): number {
+  const length = wallLength(wall);
+  return (
+    (point.x - wall.path.start.x) * (wall.path.end.x - wall.path.start.x) +
+    (point.y - wall.path.start.y) * (wall.path.end.y - wall.path.start.y)
+  ) / length;
+}
 
 function wallPolygonPoints(wall: Wall): string {
   return deriveWallFaces(wall)
@@ -63,12 +90,19 @@ export function App() {
   const [yaml, setYaml] = useState("");
   const [error, setError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
+  const [selectedOpeningId, setSelectedOpeningId] = useState<string>();
   const [mode, setMode] = useState<"draw" | "select">("draw");
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
     | { kind: "draw"; start: PointMm }
     | { kind: "move"; wallId: string; start: PointMm }
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
+    | {
+        kind: "opening";
+        openingId: string;
+        start: PointMm;
+        startPositionMm: number;
+      }
   >();
   const importInput = useRef<HTMLInputElement>(null);
   const repository = useRef(
@@ -80,7 +114,9 @@ export function App() {
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
+  const openings = activeLevel?.openings ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
+  const selectedOpening = openings.find(({ id }) => id === selectedOpeningId);
 
   function refreshHistoryControls(project: AutosavedProject): void {
     setHistoryControls({
@@ -163,6 +199,7 @@ export function App() {
     );
     if (restored) {
       setSelectedWallId(undefined);
+      setSelectedOpeningId(undefined);
       refreshHistoryControls(project);
     }
   }
@@ -202,6 +239,7 @@ export function App() {
 
     const wall = findWallAtPoint(point, walls, view.width / 400);
     setSelectedWallId(wall?.id);
+    setSelectedOpeningId(undefined);
     if (wall) {
       setGesture({ kind: "move", wallId: wall.id, start: point });
     }
@@ -232,7 +270,7 @@ export function App() {
         }, walls.filter(({ id }) => id !== wall.id), view.width / 80);
         await commit(workspace.moveWall(gesture.wallId, delta));
       }
-    } else {
+    } else if (gesture.kind === "endpoint") {
       const wall = walls.find(({ id }) => id === gesture.wallId);
       if (wall) {
         const other = gesture.endpoint === "start" ? wall.path.end : wall.path.start;
@@ -241,6 +279,25 @@ export function App() {
         const hasExactSnap = snapped.x !== point.x || snapped.y !== point.y;
         await commit(workspace.updateWall(wall.id, {
           [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
+        }));
+      }
+    } else {
+      const opening = openings.find(({ id }) => id === gesture.openingId);
+      const wall = opening
+        ? walls.find(({ id }) => id === opening.hostWallId)
+        : undefined;
+      if (opening && wall) {
+        const pointerDelta = distanceAlongWall(wall, point)
+          - distanceAlongWall(wall, gesture.start);
+        const nextPosition = Math.max(
+          0,
+          Math.min(
+            wallLength(wall) - opening.widthMm,
+            Math.round(gesture.startPositionMm + pointerDelta)
+          )
+        );
+        await commit(workspace.updateOpening(opening.id, {
+          positionMm: nextPosition
         }));
       }
     }
@@ -257,6 +314,74 @@ export function App() {
       : field === "endY" ? { end: { ...selectedWall.path.end, y: Math.round(numeric) } }
       : { [field]: field === "angleDeg" ? numeric : Math.round(numeric) };
     await commit(workspace.updateWall(selectedWall.id, update));
+  }
+
+  async function editOpening(update: OpeningUpdate): Promise<void> {
+    if (!workspace || !selectedOpening) return;
+    try {
+      await commit(workspace.updateOpening(selectedOpening.id, update));
+    } catch (cause) {
+      setError(cause instanceof ProjectValidationError
+        ? cause.diagnostics.map(({ message }) => message).join(" ")
+        : cause instanceof Error ? cause.message : "Unable to edit Opening.");
+    }
+  }
+
+  async function editOpeningNumber(
+    field: OpeningEditField,
+    value: string
+  ): Promise<void> {
+    const numeric = Number(value);
+    if (!value || !Number.isFinite(numeric)) return;
+    await editOpening({ [field]: Math.round(numeric) });
+  }
+
+  async function addOpening(kind: Opening["kind"]): Promise<void> {
+    if (!workspace || !selectedWall) return;
+    const widthMm = Math.min(kind === "passage" ? 1000 : 900, wallLength(selectedWall));
+    const positionMm = Math.round((wallLength(selectedWall) - widthMm) / 2);
+    const heightMm = Math.min(kind === "window" ? 1200 : 2100, selectedWall.heightMm);
+    try {
+      const next = kind === "door"
+        ? workspace.addOpening({
+            kind,
+            hostWallId: selectedWall.id,
+            positionMm,
+            widthMm,
+            heightMm,
+            operation: {
+              kind: "hinged",
+              hingeSide: "start",
+              swingDirection: "inward"
+            }
+          })
+        : kind === "window"
+          ? workspace.addOpening({
+              kind,
+              hostWallId: selectedWall.id,
+              positionMm,
+              widthMm,
+              heightMm,
+              sillHeightMm: Math.max(0, Math.min(900, selectedWall.heightMm - heightMm)),
+              operation: { kind: "fixed" }
+            })
+          : workspace.addOpening({
+              kind,
+              hostWallId: selectedWall.id,
+              positionMm,
+              widthMm,
+              heightMm
+            });
+      const durable = await commit(next);
+      if (durable) {
+        setSelectedOpeningId(durable.activeLevel.openings.at(-1)?.id);
+        setMode("select");
+      }
+    } catch (cause) {
+      setError(cause instanceof ProjectValidationError
+        ? cause.diagnostics.map(({ message }) => message).join(" ")
+        : cause instanceof Error ? cause.message : "Unable to add Opening.");
+    }
   }
 
   async function createProject(): Promise<void> {
@@ -459,6 +584,10 @@ export function App() {
             <button disabled={isSaving} className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
             <button disabled={isSaving} className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
             <span>{walls.length} {walls.length === 1 ? "wall" : "walls"}</span>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("door")}>Add door</button>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("window")}>Add window</button>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("passage")}>Add passage</button>
+            <span>{openings.length} {openings.length === 1 ? "opening" : "openings"}</span>
             <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
             <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
             <button type="button" aria-label="Pan left" onClick={() => setView((current) => ({ ...current, x: current.x - current.width / 10 }))}>←</button>
@@ -505,6 +634,111 @@ export function App() {
                 points={wallPolygonPoints(selectedWall)}
               />
             ) : null}
+            {openings.map((opening) => {
+              const host = walls.find(({ id }) => id === opening.hostWallId);
+              if (!host) return null;
+              const start = pointAlongWall(host, opening.positionMm);
+              const end = pointAlongWall(host, opening.positionMm + opening.widthMm);
+              const length = wallLength(host);
+              const unit = {
+                x: (host.path.end.x - host.path.start.x) / length,
+                y: (host.path.end.y - host.path.start.y) / length
+              };
+              const normal = { x: -unit.y, y: unit.x };
+              const isSelected = opening.id === selectedOpeningId;
+              const operation = opening.kind === "passage"
+                ? "passage"
+                : opening.operation.kind;
+              const hinge = opening.kind !== "passage"
+                && opening.operation.kind === "hinged"
+                ? opening.operation.hingeSide === "start" ? start : end
+                : undefined;
+              const swingSign = opening.kind !== "passage"
+                && opening.operation.kind === "hinged"
+                && opening.operation.swingDirection === "outward" ? -1 : 1;
+              const leafEnd = hinge ? {
+                x: hinge.x + normal.x * opening.widthMm * swingSign,
+                y: hinge.y + normal.y * opening.widthMm * swingSign
+              } : undefined;
+              const slideDirection = opening.kind !== "passage"
+                && opening.operation.kind === "sliding"
+                ? opening.operation.slideDirection
+                : undefined;
+              const slideTip = slideDirection === "start" ? start
+                : slideDirection === "end" ? end
+                  : undefined;
+              const slideTail = slideTip
+                ? pointAlongWall(
+                    host,
+                    opening.positionMm + opening.widthMm / 2
+                  )
+                : undefined;
+              const arrowBack = slideDirection === "start" ? unit : {
+                x: -unit.x,
+                y: -unit.y
+              };
+              const slideArrow = slideTip && slideTail
+                ? `M ${slideTail.x} ${-slideTail.y} L ${slideTip.x} ${-slideTip.y} M ${slideTip.x + arrowBack.x * 130 + normal.x * 70} ${-(slideTip.y + arrowBack.y * 130 + normal.y * 70)} L ${slideTip.x} ${-slideTip.y} L ${slideTip.x + arrowBack.x * 130 - normal.x * 70} ${-(slideTip.y + arrowBack.y * 130 - normal.y * 70)}`
+                : undefined;
+              return (
+                <g
+                  key={opening.id}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`${opening.kind[0]!.toUpperCase()}${opening.kind.slice(1)} opening`}
+                  className={`opening-symbol opening-${opening.kind} opening-${operation}${isSelected ? " selected-opening" : ""}`}
+                  data-operation={operation}
+                  onPointerDown={(event) => {
+                    if (transitionPending.current) return;
+                    const svg = event.currentTarget.ownerSVGElement;
+                    if (!svg) return;
+                    event.stopPropagation();
+                    setSelectedOpeningId(opening.id);
+                    setSelectedWallId(opening.hostWallId);
+                    setMode("select");
+                    setGesture({
+                      kind: "opening",
+                      openingId: opening.id,
+                      start: clientPoint(svg, event.clientX, event.clientY),
+                      startPositionMm: opening.positionMm
+                    });
+                  }}
+                >
+                  <line
+                    className="opening-cut"
+                    x1={start.x}
+                    y1={-start.y}
+                    x2={end.x}
+                    y2={-end.y}
+                    strokeWidth={host.thicknessMm + 36}
+                  />
+                  {opening.kind === "passage" ? (
+                    <>
+                      <line className="opening-jamb" x1={start.x - normal.x * 90} y1={-(start.y - normal.y * 90)} x2={start.x + normal.x * 90} y2={-(start.y + normal.y * 90)} />
+                      <line className="opening-jamb" x1={end.x - normal.x * 90} y1={-(end.y - normal.y * 90)} x2={end.x + normal.x * 90} y2={-(end.y + normal.y * 90)} />
+                    </>
+                  ) : opening.kind === "window" ? (
+                    <>
+                      <line className="window-pane" x1={start.x} y1={-start.y} x2={end.x} y2={-end.y} />
+                      <line className="window-pane window-pane-offset" x1={start.x + normal.x * 45} y1={-(start.y + normal.y * 45)} x2={end.x + normal.x * 45} y2={-(end.y + normal.y * 45)} />
+                      {leafEnd ? <line className="opening-leaf" x1={hinge!.x} y1={-hinge!.y} x2={leafEnd.x} y2={-leafEnd.y} /> : null}
+                      {slideArrow ? <path className="slide-direction" d={slideArrow} /> : null}
+                    </>
+                  ) : opening.operation.kind === "hinged" && leafEnd ? (
+                    <>
+                      <line className="opening-leaf" x1={hinge!.x} y1={-hinge!.y} x2={leafEnd.x} y2={-leafEnd.y} />
+                      <path className="door-swing" d={`M ${opening.operation.hingeSide === "start" ? end.x : start.x} ${-(opening.operation.hingeSide === "start" ? end.y : start.y)} A ${opening.widthMm} ${opening.widthMm} 0 0 ${swingSign > 0 ? 1 : 0} ${leafEnd.x} ${-leafEnd.y}`} />
+                    </>
+                  ) : (
+                    <>
+                      <line className="sliding-panel" x1={start.x + normal.x * 45} y1={-(start.y + normal.y * 45)} x2={end.x + normal.x * 45} y2={-(end.y + normal.y * 45)} />
+                      <line className="sliding-panel" x1={start.x - normal.x * 45} y1={-(start.y - normal.y * 45)} x2={end.x - normal.x * 45} y2={-(end.y - normal.y * 45)} />
+                      {slideArrow ? <path className="slide-direction" d={slideArrow} /> : null}
+                    </>
+                  )}
+                </g>
+              );
+            })}
             {deriveWallJunctions(walls).map(({ point }) => (
               <circle className="junction" key={`${point.x}:${point.y}`} cx={point.x} cy={-point.y} r={view.width / 220} />
             ))}
@@ -537,6 +771,139 @@ export function App() {
                   setSelectedWallId(undefined);
                 }
               }}>Delete wall</button>
+            </div>
+          ) : null}
+          {selectedOpening ? (
+            <div className="opening-properties" aria-label="Selected Opening properties">
+              <label>
+                <span>Opening type</span>
+                <input aria-label="Opening type" readOnly value={selectedOpening.kind} />
+              </label>
+              <label>
+                <span>Host Wall</span>
+                <input aria-label="Host Wall" readOnly value={selectedOpening.hostWallId} />
+              </label>
+              {([
+                ["positionMm", "Opening position (mm)", selectedOpening.positionMm],
+                ["widthMm", "Opening width (mm)", selectedOpening.widthMm],
+                ["heightMm", "Opening height (mm)", selectedOpening.heightMm],
+                ...(selectedOpening.kind === "window"
+                  ? [["sillHeightMm", "Window sill height (mm)", selectedOpening.sillHeightMm] as [OpeningEditField, string, number]]
+                  : [])
+              ] satisfies [OpeningEditField, string, number][]).map(([field, label, value]) => (
+                <label key={field}>
+                  <span>{label}</span>
+                  <input
+                    disabled={isSaving}
+                    aria-label={label}
+                    type="number"
+                    step="1"
+                    value={value}
+                    onChange={(event) => void editOpeningNumber(field, event.target.value)}
+                  />
+                </label>
+              ))}
+              {selectedOpening.kind !== "passage" ? (
+                <label>
+                  <span>{selectedOpening.kind === "door" ? "Door operation" : "Window operation"}</span>
+                  <select
+                    disabled={isSaving}
+                    aria-label={selectedOpening.kind === "door" ? "Door operation" : "Window operation"}
+                    value={selectedOpening.operation.kind}
+                    onChange={(event) => {
+                      const kind = event.target.value;
+                      void editOpening({
+                        operation: kind === "fixed"
+                          ? { kind: "fixed" }
+                          : kind === "hinged"
+                            ? { kind: "hinged", hingeSide: "start", swingDirection: "inward" }
+                            : { kind: "sliding", slideDirection: "start" }
+                      });
+                    }}
+                  >
+                    {selectedOpening.kind === "window" ? <option value="fixed">Fixed</option> : null}
+                    <option value="hinged">Hinged</option>
+                    <option value="sliding">Sliding</option>
+                  </select>
+                </label>
+              ) : null}
+              {selectedOpening.kind !== "passage"
+              && selectedOpening.operation.kind === "hinged" ? (
+                <>
+                  <label>
+                    <span>Hinge side</span>
+                    <select
+                      disabled={isSaving}
+                      aria-label="Hinge side"
+                      value={selectedOpening.operation.hingeSide}
+                      onChange={(event) => void editOpening({
+                        operation: {
+                          kind: "hinged",
+                          hingeSide: event.target.value as "start" | "end",
+                          swingDirection: selectedOpening.operation.kind === "hinged"
+                            ? selectedOpening.operation.swingDirection
+                            : "inward"
+                        }
+                      })}
+                    >
+                      <option value="start">Wall path start</option>
+                      <option value="end">Wall path end</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>Swing direction</span>
+                    <select
+                      disabled={isSaving}
+                      aria-label="Swing direction"
+                      value={selectedOpening.operation.swingDirection}
+                      onChange={(event) => void editOpening({
+                        operation: {
+                          kind: "hinged",
+                          hingeSide: selectedOpening.operation.kind === "hinged"
+                            ? selectedOpening.operation.hingeSide
+                            : "start",
+                          swingDirection: event.target.value as "inward" | "outward"
+                        }
+                      })}
+                    >
+                      <option value="inward">Inward</option>
+                      <option value="outward">Outward</option>
+                    </select>
+                  </label>
+                </>
+              ) : null}
+              {selectedOpening.kind !== "passage"
+              && selectedOpening.operation.kind === "sliding" ? (
+                <label>
+                  <span>Slide direction</span>
+                  <select
+                    disabled={isSaving}
+                    aria-label="Slide direction"
+                    value={selectedOpening.operation.slideDirection}
+                    onChange={(event) => void editOpening({
+                      operation: {
+                        kind: "sliding",
+                        slideDirection: event.target.value as "start" | "end"
+                      }
+                    })}
+                  >
+                    <option value="start">Toward Wall path start</option>
+                    <option value="end">Toward Wall path end</option>
+                  </select>
+                </label>
+              ) : null}
+              <button
+                type="button"
+                className="danger-button"
+                disabled={isSaving}
+                onClick={async () => {
+                  if (await commit(workspace.deleteOpening(selectedOpening.id))) {
+                    setSelectedOpeningId(undefined);
+                  }
+                }}
+              >
+                Delete opening
+              </button>
             </div>
           ) : null}
         </section>

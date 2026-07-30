@@ -354,6 +354,7 @@ h2 {
 
 .plan-toolbar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 7px;
   margin-bottom: 10px;
@@ -367,10 +368,13 @@ h2 {
 }
 
 .plan-toolbar span {
-  margin-right: auto;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 11px;
+}
+
+.plan-toolbar span:last-of-type {
+  margin-right: auto;
 }
 
 .plan-toolbar .tool-active {
@@ -379,7 +383,8 @@ h2 {
   color: white;
 }
 
-.wall-properties {
+.wall-properties,
+.opening-properties {
   display: grid;
   grid-template-columns: repeat(4, minmax(100px, 1fr));
   gap: 10px;
@@ -389,20 +394,72 @@ h2 {
   background: var(--paper);
 }
 
-.wall-properties label {
+.wall-properties label,
+.opening-properties label {
   display: grid;
   gap: 4px;
 }
 
-.wall-properties label span {
+.wall-properties label span,
+.opening-properties label span {
   color: var(--muted);
   font-size: 10px;
 }
 
-.wall-properties input {
+.wall-properties input,
+.opening-properties input,
+.opening-properties select {
   min-width: 0;
   border: 1px solid var(--line);
   padding: 7px;
+}
+
+.opening-symbol {
+  cursor: grab;
+  outline: none;
+}
+
+.opening-symbol:active {
+  cursor: grabbing;
+}
+
+.opening-cut {
+  stroke: #fffef9;
+}
+
+.opening-jamb,
+.opening-leaf,
+.sliding-panel,
+.slide-direction,
+.window-pane {
+  fill: none;
+  stroke: #15251c;
+  stroke-width: 28;
+}
+
+.slide-direction {
+  stroke-width: 20;
+}
+
+.window-pane {
+  stroke: #34738a;
+  stroke-width: 34;
+}
+
+.door-swing {
+  fill: none;
+  stroke: #59645e;
+  stroke-dasharray: 32 22;
+  stroke-width: 18;
+}
+
+.selected-opening .opening-jamb,
+.selected-opening .opening-leaf,
+.selected-opening .sliding-panel,
+.selected-opening .slide-direction,
+.selected-opening .window-pane,
+.selected-opening .door-swing {
+  stroke: var(--accent);
 }
 
 .danger-button {

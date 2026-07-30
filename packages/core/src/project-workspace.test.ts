@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CURRENT_SCHEMA_VERSION,
+  ProjectValidationError,
   ProjectWorkspace,
   createProjectDocument,
   parseProjectDocument,
@@ -12,7 +13,9 @@ function deterministicIdFactory(): () => string {
     "project_00000000-0000-4000-8000-000000000001",
     "level_00000000-0000-4000-8000-000000000002",
     "wall_00000000-0000-4000-8000-000000000003",
-    "wall_00000000-0000-4000-8000-000000000004"
+    "opening_00000000-0000-4000-8000-000000000005",
+    "opening_00000000-0000-4000-8000-000000000006",
+    "opening_00000000-0000-4000-8000-000000000007"
   ];
 
   return () => {
@@ -45,6 +48,7 @@ describe("Project Workspace acceptance seam", () => {
           baseElevationMm: 0,
           defaultWallHeightMm: 2500,
           walls: [],
+          openings: [],
           extensions: {}
         }
       ],
@@ -105,6 +109,117 @@ describe("Project Workspace acceptance seam", () => {
     expect(repeated.activeLevel.walls[0]!.path.end).toEqual({
       x: 1800,
       y: 2400
+    });
+  });
+
+  it("adds, edits, moves, and deletes each Opening type on an ordered Wall path", () => {
+    const workspace = ProjectWorkspace.create("Openings", {
+      idFactory: deterministicIdFactory()
+    }).addWall({
+      start: { x: 3000, y: 1000 },
+      end: { x: 0, y: 1000 },
+      heightMm: 3000
+    });
+    const wallId = workspace.activeLevel.walls[0]!.id;
+    const withDoor = workspace.addOpening({
+      kind: "door",
+      hostWallId: wallId,
+      positionMm: 300,
+      widthMm: 900,
+      heightMm: 2100,
+      operation: {
+        kind: "hinged",
+        hingeSide: "start",
+        swingDirection: "inward"
+      }
+    });
+    const doorId = withDoor.activeLevel.openings[0]!.id;
+    const editedDoor = withDoor.updateOpening(doorId, {
+      operation: { kind: "sliding", slideDirection: "end" },
+      widthMm: 1000
+    });
+    const movedDoor = editedDoor.moveOpening(doorId, 250);
+    const withWindow = movedDoor.addOpening({
+      kind: "window",
+      hostWallId: wallId,
+      positionMm: 1600,
+      widthMm: 800,
+      heightMm: 1200,
+      sillHeightMm: 900,
+      operation: { kind: "fixed" }
+    });
+    const withPassage = withWindow.addOpening({
+      kind: "passage",
+      hostWallId: wallId,
+      positionMm: 2500,
+      widthMm: 500,
+      heightMm: 2200
+    });
+
+    expect(withPassage.activeLevel.openings).toMatchObject([
+      {
+        id: "opening_00000000-0000-4000-8000-000000000005",
+        kind: "door",
+        positionMm: 550,
+        widthMm: 1000,
+        operation: { kind: "sliding", slideDirection: "end" }
+      },
+      {
+        kind: "window",
+        positionMm: 1600,
+        sillHeightMm: 900,
+        operation: { kind: "fixed" }
+      },
+      {
+        kind: "passage",
+        positionMm: 2500,
+        heightMm: 2200
+      }
+    ]);
+    expect(withPassage.exportYaml()).toContain("hostWallId:");
+    expect(withPassage.deleteOpening(doorId).activeLevel.openings).toHaveLength(2);
+  });
+
+  it("rejects invalid Opening dimensions, hosts, bounds, and invalidating Wall edits atomically", () => {
+    const workspace = ProjectWorkspace.create("Atomic openings", {
+      idFactory: deterministicIdFactory()
+    }).addWall({
+      start: { x: 0, y: 0 },
+      end: { x: 3000, y: 0 },
+      heightMm: 2500
+    });
+    const wallId = workspace.activeLevel.walls[0]!.id;
+    const withWindow = workspace.addOpening({
+      kind: "window",
+      hostWallId: wallId,
+      positionMm: 1200,
+      widthMm: 1000,
+      heightMm: 1000,
+      sillHeightMm: 1000,
+      operation: { kind: "hinged", hingeSide: "end", swingDirection: "outward" }
+    });
+    const windowId = withWindow.activeLevel.openings[0]!.id;
+
+    expect(() => workspace.addOpening({
+      kind: "passage",
+      hostWallId: "wall_00000000-0000-4000-8000-999999999999",
+      positionMm: 0,
+      widthMm: 800,
+      heightMm: 2000
+    })).toThrow(ProjectValidationError);
+    expect(() => withWindow.updateOpening(windowId, { widthMm: 0 }))
+      .toThrow(ProjectValidationError);
+    expect(() => withWindow.moveOpening(windowId, 1000))
+      .toThrow(ProjectValidationError);
+    expect(() => withWindow.updateWall(wallId, { lengthMm: 1800 }))
+      .toThrow(ProjectValidationError);
+    expect(() => withWindow.updateWall(wallId, { heightMm: 1500 }))
+      .toThrow(ProjectValidationError);
+    expect(() => withWindow.deleteWall(wallId)).toThrow(ProjectValidationError);
+    expect(withWindow.activeLevel.openings[0]).toMatchObject({
+      id: windowId,
+      positionMm: 1200,
+      widthMm: 1000
     });
   });
 

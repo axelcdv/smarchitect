@@ -39,14 +39,18 @@ function schemaErrorCode(error: ErrorObject): string {
     error.keyword === "pattern" &&
     (path === "/id" ||
       path === "/activeLevelId" ||
-      /^\/levels\/\d+\/id$/.test(path))
+      /^\/levels\/\d+\/id$/.test(path) ||
+      /^\/levels\/\d+\/openings\/\d+\/(id|hostWallId)$/.test(path))
   ) {
     return "stable-id.invalid";
   }
 
   if (
     error.keyword === "exclusiveMinimum" &&
-    /^\/levels\/\d+\/defaultWallHeightMm$/.test(path)
+    (
+      /^\/levels\/\d+\/defaultWallHeightMm$/.test(path) ||
+      /^\/levels\/\d+\/openings\/\d+\/(widthMm|heightMm)$/.test(path)
+    )
   ) {
     return "dimension.non-positive";
   }
@@ -79,6 +83,8 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
       });
     }
     levelIds.add(level.id);
+    const wallsById = new Map(level.walls.map((wall) => [wall.id, wall]));
+    const openingIds = new Set<string>();
 
     for (const [wallIndex, wall] of level.walls.entries()) {
       if (
@@ -90,6 +96,53 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
           severity: "error",
           path: `/levels/${index}/walls/${wallIndex}/path/end`,
           message: "Wall path must have distinct start and end points."
+        });
+      }
+    }
+
+    for (const [openingIndex, opening] of level.openings.entries()) {
+      const openingPath = `/levels/${index}/openings/${openingIndex}`;
+      if (openingIds.has(opening.id)) {
+        diagnostics.push({
+          code: "opening.id.duplicate",
+          severity: "error",
+          path: `${openingPath}/id`,
+          message: `Opening ID "${opening.id}" must be unique within the Level.`
+        });
+      }
+      openingIds.add(opening.id);
+
+      const host = wallsById.get(opening.hostWallId);
+      if (!host) {
+        diagnostics.push({
+          code: "opening.host.missing",
+          severity: "error",
+          path: `${openingPath}/hostWallId`,
+          message: `Opening host Wall "${opening.hostWallId}" does not exist in the Level.`
+        });
+        continue;
+      }
+
+      const wallLength = Math.hypot(
+        host.path.end.x - host.path.start.x,
+        host.path.end.y - host.path.start.y
+      );
+      if (opening.positionMm + opening.widthMm > wallLength) {
+        diagnostics.push({
+          code: "opening.bounds.horizontal",
+          severity: "error",
+          path: `${openingPath}/positionMm`,
+          message: "Opening must fit within its host Wall path."
+        });
+      }
+
+      const bottom = opening.kind === "window" ? opening.sillHeightMm : 0;
+      if (bottom + opening.heightMm > host.heightMm) {
+        diagnostics.push({
+          code: "opening.bounds.vertical",
+          severity: "error",
+          path: `${openingPath}/heightMm`,
+          message: "Opening must fit within the height of its host Wall."
         });
       }
     }
