@@ -57,6 +57,21 @@ function deterministicOpeningIdFactory(): () => string {
   };
 }
 
+function deterministicFixtureIdFactory(): () => string {
+  const ids = [
+    "project_00000000-0000-4000-8000-000000000001",
+    "level_00000000-0000-4000-8000-000000000002",
+    "fixture_placement_00000000-0000-4000-8000-000000000006",
+    "fixture_placement_00000000-0000-4000-8000-000000000008",
+    "fixture_definition_00000000-0000-4000-8000-000000000007"
+  ];
+  return () => {
+    const id = ids.shift();
+    if (!id) throw new Error("The test exhausted its deterministic Fixture IDs");
+    return id;
+  };
+}
+
 describe("Project Workspace acceptance seam", () => {
   it("creates a valid metric project with one active Level", () => {
     const document = createProjectDocument("My renovation", {
@@ -70,6 +85,7 @@ describe("Project Workspace acceptance seam", () => {
       units: "metric",
       activeLevelId: "level_00000000-0000-4000-8000-000000000002",
       furnitureDefinitions: [],
+      fixtureDefinitions: [],
       levels: [
         {
           id: "level_00000000-0000-4000-8000-000000000002",
@@ -80,6 +96,7 @@ describe("Project Workspace acceptance seam", () => {
           roomLabels: [],
           openings: [],
           furniturePlacements: [],
+          fixturePlacements: [],
           extensions: {}
         }
       ],
@@ -764,5 +781,106 @@ extensions: {}
     expect(() => furnished.updateFurniturePlacement(placementId, {
       widthMm: 123
     } as never)).toThrow(/dimension overrides/i);
+  });
+
+  it("keeps Fixture Definitions distinct, embedded, and reproducible", () => {
+    const libraryFixture = {
+      id: "fixture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Kitchen sink",
+      widthMm: 800,
+      depthMm: 500,
+      heightMm: 220,
+      extensions: {}
+    };
+    const workspace = ProjectWorkspace.create("Installed home", {
+      idFactory: deterministicFixtureIdFactory()
+    }).placeFixture(libraryFixture, {
+      position: { x: 100, y: 200 },
+      rotationDeg: 90,
+      elevationMm: 850
+    });
+    const placement = workspace.activeLevel.fixturePlacements![0]!;
+    const changedLibraryFixture = { ...libraryFixture, widthMm: 900 };
+
+    expect(workspace.document.fixtureDefinitions).toEqual([libraryFixture]);
+    expect(placement).toMatchObject({
+      definitionId: libraryFixture.id,
+      position: { x: 100, y: 200 },
+      rotationDeg: 90,
+      elevationMm: 850
+    });
+    expect(workspace.document.fixtureDefinitions![0]!.widthMm).toBe(800);
+    expect(changedLibraryFixture.widthMm).toBe(900);
+    expect(ProjectWorkspace.importYaml(workspace.exportYaml()).document)
+      .toEqual(workspace.document);
+    const authoredYaml = workspace.exportYaml().replace(
+      "fixtureDefinitions:",
+      "# fixture comment\nfixtureDefinitions:"
+    );
+    expect(ProjectWorkspace.importYaml(authoredYaml)
+      .updateFixtureDefinition(libraryFixture.id, { widthMm: 900 })
+      .exportYaml()).toContain("# fixture comment");
+  });
+
+  it("edits shared Fixtures and can make one Fixture Placement unique", () => {
+    const definition = {
+      id: "fixture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Radiator",
+      widthMm: 1000,
+      depthMm: 150,
+      heightMm: 600,
+      extensions: {}
+    };
+    const first = ProjectWorkspace.create("Fixtures", {
+      idFactory: deterministicFixtureIdFactory()
+    }).placeFixture(definition, { position: { x: 0, y: 0 } });
+    const two = first.placeFixture(definition, { position: { x: 2000, y: 0 } });
+    const [firstPlacement, secondPlacement] = two.activeLevel.fixturePlacements!;
+    const shared = two.updateFixtureDefinition(definition.id, { widthMm: 1200 });
+    const unique = shared.makeFixturePlacementUnique(firstPlacement!.id);
+    const uniqueDefinitionId = unique.activeLevel.fixturePlacements![0]!.definitionId;
+    const edited = unique
+      .updateFixtureDefinition(uniqueDefinitionId, { widthMm: 700 })
+      .updateFixturePlacement(firstPlacement!.id, {
+        position: { x: 250, y: 300 },
+        rotationDeg: -45,
+        elevationMm: 100
+      });
+
+    expect(shared.document.fixtureDefinitions![0]!.widthMm).toBe(1200);
+    expect(uniqueDefinitionId).not.toBe(definition.id);
+    expect(unique.activeLevel.fixturePlacements![1]!.definitionId)
+      .toBe(secondPlacement!.definitionId);
+    expect(edited.document.fixtureDefinitions!.find(
+      ({ id }) => id === uniqueDefinitionId
+    )!.widthMm).toBe(700);
+    expect(edited.activeLevel.fixturePlacements![0]).toMatchObject({
+      position: { x: 250, y: 300 },
+      rotationDeg: 315,
+      elevationMm: 100
+    });
+    expect(edited.deleteFixturePlacement(firstPlacement!.id)
+      .activeLevel.fixturePlacements).toHaveLength(1);
+  });
+
+  it("rejects cross-kind Fixture references during validation", () => {
+    const document = ProjectWorkspace.create("Typed fixtures", {
+      idFactory: deterministicFixtureIdFactory()
+    }).document;
+    document.levels[0]!.fixturePlacements = [{
+      id: "fixture_placement_00000000-0000-4000-8000-000000000006",
+      definitionId:
+        "furniture_definition_00000000-0000-4000-8000-000000000005",
+      position: { x: 0, y: 0 },
+      rotationDeg: 0,
+      elevationMm: 0,
+      extensions: {}
+    }];
+
+    expect(validateProjectDocument(document)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        path: "/levels/0/fixturePlacements/0/definitionId"
+      })
+    ]));
   });
 });

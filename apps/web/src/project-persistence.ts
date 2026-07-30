@@ -1,5 +1,6 @@
 import {
   ProjectHistory,
+  type FixtureDefinition,
   type FurnitureDefinition,
   type ProjectHistorySnapshot,
   type ProjectWorkspace
@@ -10,7 +11,9 @@ const DATABASE_VERSION = 2;
 const PROJECT_STORE = "active-project";
 const ACTIVE_PROJECT_KEY = "active";
 const ITEM_LIBRARY_STORE = "item-library";
+const ITEM_LIBRARY_KEY = "items";
 const FURNITURE_LIBRARY_KEY = "furniture";
+const FIXTURE_LIBRARY_KEY = "fixtures";
 
 export interface ProjectRepository {
   load(): Promise<ProjectHistorySnapshot | undefined>;
@@ -68,47 +71,87 @@ async function openDatabase(): Promise<IDBDatabase> {
   return requestResult(request);
 }
 
-export interface FurnitureLibraryRepository {
-  load(): Promise<FurnitureLibraryHistorySnapshot | undefined>;
-  save(snapshot: FurnitureLibraryHistorySnapshot): Promise<void>;
+export type ItemKind = "furniture" | "fixture";
+
+export interface ItemLibraryHistoryEntry {
+  kind: ItemKind | "initial";
+  furnitureDefinitions: FurnitureDefinition[];
+  fixtureDefinitions: FixtureDefinition[];
 }
 
-export interface FurnitureLibraryHistorySnapshot {
-  entries: FurnitureDefinition[][];
+export interface ItemLibraryHistorySnapshot {
+  entries: ItemLibraryHistoryEntry[];
   cursor: number;
 }
 
-export class IndexedDbFurnitureLibraryRepository
-implements FurnitureLibraryRepository {
-  async load(): Promise<FurnitureLibraryHistorySnapshot | undefined> {
+export interface ItemLibraryRepository {
+  load(): Promise<ItemLibraryHistorySnapshot | undefined>;
+  save(snapshot: ItemLibraryHistorySnapshot): Promise<void>;
+}
+
+interface LegacyDefinitionLibraryHistorySnapshot<T> {
+  entries: T[][];
+  cursor: number;
+}
+
+function currentLegacyDefinitions<T>(
+  stored: LegacyDefinitionLibraryHistorySnapshot<T> | T[] | undefined
+): T[] {
+  if (!stored) return [];
+  if (Array.isArray(stored)) return stored;
+  return stored.entries[stored.cursor] ?? [];
+}
+
+export class IndexedDbItemLibraryRepository implements ItemLibraryRepository {
+  async load(): Promise<ItemLibraryHistorySnapshot | undefined> {
     const database = await openDatabase();
     try {
       const transaction = database.transaction(ITEM_LIBRARY_STORE, "readonly");
-      const stored = await requestResult<
-        FurnitureLibraryHistorySnapshot | FurnitureDefinition[] | undefined
-      >(
-        transaction.objectStore(ITEM_LIBRARY_STORE).get(FURNITURE_LIBRARY_KEY)
-      );
-      if (!stored) return undefined;
-      if (Array.isArray(stored)) {
+      const store = transaction.objectStore(ITEM_LIBRARY_STORE);
+      const combinedRequest = store.get(ITEM_LIBRARY_KEY);
+      const furnitureRequest = store.get(FURNITURE_LIBRARY_KEY);
+      const fixtureRequest = store.get(FIXTURE_LIBRARY_KEY);
+      const [combined, furniture, fixtures] = await Promise.all([
+        requestResult<ItemLibraryHistorySnapshot | undefined>(combinedRequest),
+        requestResult<
+          LegacyDefinitionLibraryHistorySnapshot<FurnitureDefinition>
+          | FurnitureDefinition[]
+          | undefined
+        >(furnitureRequest),
+        requestResult<
+          LegacyDefinitionLibraryHistorySnapshot<FixtureDefinition>
+          | FixtureDefinition[]
+          | undefined
+        >(fixtureRequest)
+      ]);
+      if (combined) return structuredClone(combined);
+      if (furniture || fixtures) {
         return {
-          entries: [[], structuredClone(stored)],
-          cursor: 1
+          entries: [{
+            kind: "initial",
+            furnitureDefinitions: structuredClone(
+              currentLegacyDefinitions(furniture)
+            ),
+            fixtureDefinitions: structuredClone(
+              currentLegacyDefinitions(fixtures)
+            )
+          }],
+          cursor: 0
         };
       }
-      return structuredClone(stored);
+      return undefined;
     } finally {
       database.close();
     }
   }
 
-  async save(snapshot: FurnitureLibraryHistorySnapshot): Promise<void> {
+  async save(snapshot: ItemLibraryHistorySnapshot): Promise<void> {
     const database = await openDatabase();
     try {
       const transaction = database.transaction(ITEM_LIBRARY_STORE, "readwrite");
       transaction.objectStore(ITEM_LIBRARY_STORE).put(
         structuredClone(snapshot),
-        FURNITURE_LIBRARY_KEY
+        ITEM_LIBRARY_KEY
       );
       await transactionCompletion(transaction);
     } finally {
@@ -117,15 +160,15 @@ implements FurnitureLibraryRepository {
   }
 }
 
-export class AutosavedFurnitureLibrary {
-  readonly #repository: FurnitureLibraryRepository;
-  #entries: FurnitureDefinition[][];
+export class AutosavedItemLibrary {
+  readonly #repository: ItemLibraryRepository;
+  #entries: ItemLibraryHistoryEntry[];
   #cursor: number;
   #pendingTransition: Promise<void> = Promise.resolve();
 
   private constructor(
-    snapshot: FurnitureLibraryHistorySnapshot,
-    repository: FurnitureLibraryRepository
+    snapshot: ItemLibraryHistorySnapshot,
+    repository: ItemLibraryRepository
   ) {
     this.#entries = structuredClone(snapshot.entries);
     this.#cursor = snapshot.cursor;
@@ -133,25 +176,35 @@ export class AutosavedFurnitureLibrary {
   }
 
   static async restore(
-    repository: FurnitureLibraryRepository
-  ): Promise<AutosavedFurnitureLibrary | undefined> {
+    repository: ItemLibraryRepository
+  ): Promise<AutosavedItemLibrary | undefined> {
     const snapshot = await repository.load();
-    return snapshot ? new AutosavedFurnitureLibrary(snapshot, repository) : undefined;
+    return snapshot
+      ? new AutosavedItemLibrary(snapshot, repository)
+      : undefined;
   }
 
   static async create(
-    repository: FurnitureLibraryRepository
-  ): Promise<AutosavedFurnitureLibrary> {
-    const library = new AutosavedFurnitureLibrary({
-      entries: [[]],
+    repository: ItemLibraryRepository
+  ): Promise<AutosavedItemLibrary> {
+    const library = new AutosavedItemLibrary({
+      entries: [{
+        kind: "initial",
+        furnitureDefinitions: [],
+        fixtureDefinitions: []
+      }],
       cursor: 0
     }, repository);
     await repository.save(library.snapshot());
     return library;
   }
 
-  get definitions(): FurnitureDefinition[] {
-    return structuredClone(this.#entries[this.#cursor] ?? []);
+  get furnitureDefinitions(): FurnitureDefinition[] {
+    return structuredClone(this.#currentEntry().furnitureDefinitions);
+  }
+
+  get fixtureDefinitions(): FixtureDefinition[] {
+    return structuredClone(this.#currentEntry().fixtureDefinitions);
   }
 
   get canUndo(): boolean {
@@ -162,58 +215,85 @@ export class AutosavedFurnitureLibrary {
     return this.#cursor < this.#entries.length - 1;
   }
 
-  snapshot(): FurnitureLibraryHistorySnapshot {
+  snapshot(): ItemLibraryHistorySnapshot {
     return {
       entries: structuredClone(this.#entries),
       cursor: this.#cursor
     };
   }
 
-  async accept(definitions: FurnitureDefinition[]): Promise<FurnitureDefinition[]> {
-    const accepted = structuredClone(definitions);
-    return this.transact(() => accepted);
+  async transactFurniture(
+    transition: (definitions: FurnitureDefinition[]) => FurnitureDefinition[]
+  ): Promise<ItemLibraryHistoryEntry> {
+    return this.#transact("furniture", (entry) => {
+      entry.furnitureDefinitions = transition(entry.furnitureDefinitions);
+    });
   }
 
-  async transact(
-    transition: (definitions: FurnitureDefinition[]) => FurnitureDefinition[]
-  ): Promise<FurnitureDefinition[]> {
+  async transactFixture(
+    transition: (definitions: FixtureDefinition[]) => FixtureDefinition[]
+  ): Promise<ItemLibraryHistoryEntry> {
+    return this.#transact("fixture", (entry) => {
+      entry.fixtureDefinitions = transition(entry.fixtureDefinitions);
+    });
+  }
+
+  #transact(
+    kind: ItemKind,
+    transition: (entry: ItemLibraryHistoryEntry) => void
+  ): Promise<ItemLibraryHistoryEntry> {
     return this.#enqueue((candidate) => {
-      const current = structuredClone(candidate.entries[candidate.cursor] ?? []);
-      const accepted = structuredClone(transition(current));
+      const current = structuredClone(
+        candidate.entries[candidate.cursor] ?? this.#emptyEntry()
+      );
+      transition(current);
+      current.kind = kind;
       candidate.entries = candidate.entries.slice(0, candidate.cursor + 1);
-      candidate.entries.push(accepted);
+      candidate.entries.push(current);
       candidate.cursor += 1;
     });
   }
 
-  async undo(): Promise<FurnitureDefinition[]> {
+  async undo(): Promise<ItemLibraryHistoryEntry> {
     return this.#enqueue((candidate) => {
       if (candidate.cursor > 0) candidate.cursor -= 1;
     });
   }
 
-  async redo(): Promise<FurnitureDefinition[]> {
+  async redo(): Promise<ItemLibraryHistoryEntry> {
     return this.#enqueue((candidate) => {
       if (candidate.cursor < candidate.entries.length - 1) candidate.cursor += 1;
     });
   }
 
   #enqueue(
-    transition: (snapshot: FurnitureLibraryHistorySnapshot) => void
-  ): Promise<FurnitureDefinition[]> {
+    transition: (snapshot: ItemLibraryHistorySnapshot) => void
+  ): Promise<ItemLibraryHistoryEntry> {
     const operation = this.#pendingTransition.then(async () => {
       const candidate = this.snapshot();
       transition(candidate);
       await this.#repository.save(candidate);
       this.#entries = candidate.entries;
       this.#cursor = candidate.cursor;
-      return this.definitions;
+      return structuredClone(this.#currentEntry());
     });
     this.#pendingTransition = operation.then(
       () => undefined,
       () => undefined
     );
     return operation;
+  }
+
+  #currentEntry(): ItemLibraryHistoryEntry {
+    return this.#entries[this.#cursor] ?? this.#emptyEntry();
+  }
+
+  #emptyEntry(): ItemLibraryHistoryEntry {
+    return {
+      kind: "initial",
+      furnitureDefinitions: [],
+      fixtureDefinitions: []
+    };
   }
 }
 

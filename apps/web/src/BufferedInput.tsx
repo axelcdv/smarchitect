@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
   type InputHTMLAttributes,
   type KeyboardEvent
@@ -21,6 +22,7 @@ export function BufferedInput({
   ...inputProps
 }: BufferedInputProps) {
   const [draft, setDraft] = useState(String(value));
+  const cancelBlurCommit = useRef(false);
 
   useEffect(() => {
     setDraft(String(value));
@@ -30,6 +32,7 @@ export function BufferedInput({
     if (event.key === "Enter") {
       event.currentTarget.blur();
     } else if (event.key === "Escape") {
+      cancelBlurCommit.current = true;
       setDraft(String(value));
       event.currentTarget.blur();
     }
@@ -40,7 +43,13 @@ export function BufferedInput({
       {...inputProps}
       value={draft}
       onBlur={() => {
+        if (cancelBlurCommit.current) {
+          cancelBlurCommit.current = false;
+          setDraft(String(value));
+          return;
+        }
         if (draft !== String(value)) onCommit(draft);
+        setDraft(String(value));
       }}
       onChange={(event) => setDraft(event.target.value)}
       onKeyDown={handleKeyDown}

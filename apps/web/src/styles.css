@@ -398,6 +398,19 @@ h2 {
   stroke-width: 24;
 }
 
+.fixture-footprint {
+  fill: rgb(58 85 128 / 34%);
+  pointer-events: none;
+  stroke: #3a5580;
+  stroke-width: 14;
+}
+
+.selected-fixture {
+  fill: rgb(217 87 63 / 38%);
+  stroke: var(--accent);
+  stroke-width: 24;
+}
+
 .plan-toolbar {
   display: flex;
   align-items: center;
@@ -566,12 +579,34 @@ h2 {
   margin-top: 12px;
 }
 
+.item-kind-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.item-kind-tabs [aria-selected="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
 .furniture-definition-form,
 .library-card {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 7px;
   margin-top: 14px;
+}
+
+.library-card .item-kind-badge {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
 }
 
 .furniture-definition-form label:first-child,

@@ -1,30 +1,33 @@
 import {
-  type FurnitureDefinition,
-  type FurnitureDefinitionInput,
-  type FurnitureDefinitionUpdate
+  type FixtureDefinition,
+  type FurnitureDefinition
 } from "@smarchitect/core";
 import { useEffect, useState } from "react";
-import type { FurnitureLibraryController } from "./use-furniture-library.js";
+import {
+  type ItemKind,
+  type ItemLibraryController
+} from "./use-item-library.js";
 
-const EMPTY_FURNITURE_DRAFT: FurnitureDefinitionInput = {
+const EMPTY_DRAFT = {
   name: "",
   widthMm: 1000,
   depthMm: 600,
   heightMm: 800
 };
 
+type Definition = FurnitureDefinition | FixtureDefinition;
 type DefinitionDraft = Pick<
-  FurnitureDefinition,
+  Definition,
   "name" | "widthMm" | "depthMm" | "heightMm"
 >;
 
 interface ItemLibraryProps {
-  controller: FurnitureLibraryController;
+  controller: ItemLibraryController;
   disabled: boolean;
-  onPlace(id: string): void;
+  onPlace(kind: ItemKind, id: string): void;
 }
 
-function draftFor(definition: FurnitureDefinition): DefinitionDraft {
+function draftFor(definition: Definition): DefinitionDraft {
   return {
     name: definition.name,
     widthMm: definition.widthMm,
@@ -38,23 +41,32 @@ export function ItemLibrary({
   disabled,
   onPlace
 }: ItemLibraryProps) {
-  const [newDefinition, setNewDefinition] = useState(EMPTY_FURNITURE_DRAFT);
+  const [kind, setKind] = useState<ItemKind>("furniture");
+  const [newDefinition, setNewDefinition] = useState(EMPTY_DRAFT);
   const [drafts, setDrafts] = useState<Record<string, DefinitionDraft>>({});
+  const label = kind === "furniture" ? "Furniture" : "Fixture";
+  const definitions: Definition[] = kind === "furniture"
+    ? controller.furnitureDefinitions
+    : controller.fixtureDefinitions;
+  const history = controller.history;
 
   useEffect(() => {
     setDrafts(Object.fromEntries(
-      controller.definitions.map((definition) => [
+      definitions.map((definition) => [
         definition.id,
         draftFor(definition)
       ])
     ));
-  }, [controller.definitions]);
+  }, [definitions]);
 
   async function commitDraft(
-    definition: FurnitureDefinition,
-    update: FurnitureDefinitionUpdate
+    definition: Definition,
+    update: Partial<DefinitionDraft>
   ): Promise<void> {
-    if (!await controller.update(definition.id, update)) {
+    const accepted = kind === "furniture"
+      ? await controller.updateFurniture(definition.id, update)
+      : await controller.updateFixture(definition.id, update);
+    if (!accepted) {
       setDrafts((current) => ({
         ...current,
         [definition.id]: draftFor(definition)
@@ -68,17 +80,33 @@ export function ItemLibrary({
         <p className="eyebrow">Reusable items</p>
         <h2 id="item-library-title">Item Library</h2>
       </div>
+      <div className="item-kind-tabs" role="tablist" aria-label="Item kind">
+        {(["furniture", "fixture"] as const).map((candidate) => (
+          <button
+            key={candidate}
+            type="button"
+            role="tab"
+            aria-selected={kind === candidate}
+            onClick={() => {
+              setKind(candidate);
+              setNewDefinition(EMPTY_DRAFT);
+            }}
+          >
+            {candidate === "furniture" ? "Furniture" : "Fixtures"}
+          </button>
+        ))}
+      </div>
       <div className="library-history-actions">
         <button
           type="button"
-          disabled={!controller.history.canUndo}
+          disabled={!history.canUndo}
           onClick={() => void controller.navigate("undo")}
         >
           Undo Item Library
         </button>
         <button
           type="button"
-          disabled={!controller.history.canRedo}
+          disabled={!history.canRedo}
           onClick={() => void controller.navigate("redo")}
         >
           Redo Item Library
@@ -88,7 +116,7 @@ export function ItemLibrary({
         <label>
           <span>Name</span>
           <input
-            aria-label="New Furniture name"
+            aria-label={`New ${label} name`}
             value={newDefinition.name}
             onChange={(event) => setNewDefinition((draft) => ({
               ...draft,
@@ -102,7 +130,7 @@ export function ItemLibrary({
               {field === "widthMm" ? "Width" : field === "depthMm" ? "Depth" : "Height"} (mm)
             </span>
             <input
-              aria-label={`New Furniture ${field}`}
+              aria-label={`New ${label} ${field}`}
               type="number"
               min="1"
               step="1"
@@ -119,19 +147,21 @@ export function ItemLibrary({
           className="primary-button"
           disabled={disabled || !newDefinition.name.trim()}
           onClick={async () => {
-            if (await controller.create(newDefinition)) {
-              setNewDefinition(EMPTY_FURNITURE_DRAFT);
-            }
+            const accepted = kind === "furniture"
+              ? await controller.createFurniture(newDefinition)
+              : await controller.createFixture(newDefinition);
+            if (accepted) setNewDefinition(EMPTY_DRAFT);
           }}
         >
-          Create Furniture
+          Create {label}
         </button>
       </div>
       <div className="library-list">
-        {controller.definitions.map((definition) => {
+        {definitions.map((definition) => {
           const draft = drafts[definition.id] ?? draftFor(definition);
           return (
             <article key={definition.id} className="library-card">
+              <strong className="item-kind-badge">{label}</strong>
               <label>
                 <span>Name</span>
                 <input
@@ -139,14 +169,9 @@ export function ItemLibrary({
                   value={draft.name}
                   onChange={(event) => setDrafts((current) => ({
                     ...current,
-                    [definition.id]: {
-                      ...draft,
-                      name: event.target.value
-                    }
+                    [definition.id]: { ...draft, name: event.target.value }
                   }))}
-                  onBlur={() => void commitDraft(definition, {
-                    name: draft.name
-                  })}
+                  onBlur={() => void commitDraft(definition, { name: draft.name })}
                 />
               </label>
               {(["widthMm", "depthMm", "heightMm"] as const).map((field) => (
@@ -175,7 +200,7 @@ export function ItemLibrary({
                 <button
                   type="button"
                   disabled={disabled}
-                  onClick={() => onPlace(definition.id)}
+                  onClick={() => onPlace(kind, definition.id)}
                 >
                   Place
                 </button>
@@ -183,7 +208,9 @@ export function ItemLibrary({
                   type="button"
                   className="danger-button"
                   disabled={disabled}
-                  onClick={() => void controller.remove(definition.id)}
+                  onClick={() => void (kind === "furniture"
+                    ? controller.removeFurniture(definition.id)
+                    : controller.removeFixture(definition.id))}
                 >
                   Delete
                 </button>

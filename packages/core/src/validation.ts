@@ -42,7 +42,8 @@ function schemaErrorCode(error: ErrorObject): string {
       /^\/levels\/\d+\/id$/.test(path) ||
       /^\/levels\/\d+\/openings\/\d+\/(id|hostWallId)$/.test(path) ||
       /^\/furnitureDefinitions\/\d+\/id$/.test(path) ||
-      /^\/levels\/\d+\/furniturePlacements\/\d+\/(id|definitionId)$/.test(path))
+      /^\/fixtureDefinitions\/\d+\/id$/.test(path) ||
+      /^\/levels\/\d+\/(furniturePlacements|fixturePlacements)\/\d+\/(id|definitionId)$/.test(path))
   ) {
     return "stable-id.invalid";
   }
@@ -53,6 +54,7 @@ function schemaErrorCode(error: ErrorObject): string {
       /^\/levels\/\d+\/defaultWallHeightMm$/.test(path) ||
       /^\/levels\/\d+\/openings\/\d+\/(widthMm|heightMm)$/.test(path) ||
       /^\/furnitureDefinitions\/\d+\/(widthMm|depthMm|heightMm)$/.test(path)
+      || /^\/fixtureDefinitions\/\d+\/(widthMm|depthMm|heightMm)$/.test(path)
     )
   ) {
     return "dimension.non-positive";
@@ -76,6 +78,7 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
   const levelIds = new Set<string>();
   const definitionIds = new Set<string>();
+  const fixtureDefinitionIds = new Set<string>();
 
   for (const [index, definition] of (document.furnitureDefinitions ?? []).entries()) {
     if (definitionIds.has(definition.id)) {
@@ -87,6 +90,18 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
       });
     }
     definitionIds.add(definition.id);
+  }
+
+  for (const [index, definition] of (document.fixtureDefinitions ?? []).entries()) {
+    if (fixtureDefinitionIds.has(definition.id)) {
+      diagnostics.push({
+        code: "fixture-definition.id.duplicate",
+        severity: "error",
+        path: `/fixtureDefinitions/${index}/id`,
+        message: `Fixture Definition ID "${definition.id}" must be unique within the Project Document.`
+      });
+    }
+    fixtureDefinitionIds.add(definition.id);
   }
 
   for (const [index, level] of document.levels.entries()) {
@@ -189,6 +204,27 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
           severity: "error",
           path: `/levels/${index}/furniturePlacements/${placementIndex}/definitionId`,
           message: `Furniture Definition "${placement.definitionId}" is not embedded in the Project Document.`
+        });
+      }
+    }
+
+    const fixturePlacementIds = new Set<string>();
+    for (const [placementIndex, placement] of (level.fixturePlacements ?? []).entries()) {
+      if (fixturePlacementIds.has(placement.id)) {
+        diagnostics.push({
+          code: "fixture-placement.id.duplicate",
+          severity: "error",
+          path: `/levels/${index}/fixturePlacements/${placementIndex}/id`,
+          message: `Fixture Placement ID "${placement.id}" must be unique within its Level.`
+        });
+      }
+      fixturePlacementIds.add(placement.id);
+      if (!fixtureDefinitionIds.has(placement.definitionId)) {
+        diagnostics.push({
+          code: "fixture-placement.definition.missing",
+          severity: "error",
+          path: `/levels/${index}/fixturePlacements/${placementIndex}/definitionId`,
+          message: `Fixture Definition "${placement.definitionId}" is not embedded in the Project Document.`
         });
       }
     }

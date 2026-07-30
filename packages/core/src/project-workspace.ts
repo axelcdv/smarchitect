@@ -3,8 +3,14 @@ import {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
   type Diagnostic,
+  type FixtureDefinition,
+  type FixtureDefinitionUpdate,
+  type FixturePlacement,
+  type FixturePlacementInput,
+  type FixturePlacementUpdate,
   type FurnitureDefinition,
   type FurnitureDefinitionUpdate,
+  type FurniturePlacement,
   type FurniturePlacementInput,
   type FurniturePlacementUpdate,
   type IdFactory,
@@ -32,6 +38,88 @@ import { wallPathLength } from "./opening-geometry.js";
 
 const DEFAULT_LEVEL_NAME = "Ground floor";
 const DEFAULT_WALL_HEIGHT_MM = 2500;
+
+interface PlacementMechanics<
+  Definition extends FurnitureDefinition | FixtureDefinition,
+  Placement extends FurniturePlacement | FixturePlacement
+> {
+  label: "Furniture" | "Fixture";
+  definitionIdKind: "furniture_definition" | "fixture_definition";
+  placementIdKind: "furniture_placement" | "fixture_placement";
+  definitions(document: ProjectDocument): Definition[] | undefined;
+  ensureDefinitions(document: ProjectDocument): Definition[];
+  placements(level: Level): Placement[] | undefined;
+  ensurePlacements(level: Level): Placement[];
+  replacePlacements(level: Level, placements: Placement[]): void;
+  createPlacement(
+    id: string,
+    definitionId: string,
+    input: FurniturePlacementInput
+  ): Placement;
+  copyDefinition(definition: Definition, id: string): Definition;
+}
+
+function createItemPlacement(
+  id: string,
+  definitionId: string,
+  input: FurniturePlacementInput
+): FurniturePlacement {
+  return {
+    id,
+    definitionId,
+    position: { ...input.position },
+    rotationDeg: normalizeAngleDeg(input.rotationDeg ?? 0),
+    elevationMm: input.elevationMm ?? 0,
+    extensions: {}
+  };
+}
+
+function copyItemDefinition(
+  definition: FurnitureDefinition,
+  id: string
+): FurnitureDefinition {
+  return {
+    ...structuredClone(definition),
+    id,
+    name: `${definition.name} copy`
+  };
+}
+
+const FURNITURE_PLACEMENT_MECHANICS: PlacementMechanics<
+  FurnitureDefinition,
+  FurniturePlacement
+> = {
+  label: "Furniture",
+  definitionIdKind: "furniture_definition",
+  placementIdKind: "furniture_placement",
+  definitions: (document) => document.furnitureDefinitions,
+  ensureDefinitions: (document) => document.furnitureDefinitions ??= [],
+  placements: (level) => level.furniturePlacements,
+  ensurePlacements: (level) => level.furniturePlacements ??= [],
+  replacePlacements: (level, placements) => {
+    level.furniturePlacements = placements;
+  },
+  createPlacement: createItemPlacement,
+  copyDefinition: copyItemDefinition
+};
+
+const FIXTURE_PLACEMENT_MECHANICS: PlacementMechanics<
+  FixtureDefinition,
+  FixturePlacement
+> = {
+  label: "Fixture",
+  definitionIdKind: "fixture_definition",
+  placementIdKind: "fixture_placement",
+  definitions: (document) => document.fixtureDefinitions,
+  ensureDefinitions: (document) => document.fixtureDefinitions ??= [],
+  placements: (level) => level.fixturePlacements,
+  ensurePlacements: (level) => level.fixturePlacements ??= [],
+  replacePlacements: (level, placements) => {
+    level.fixturePlacements = placements;
+  },
+  createPlacement: createItemPlacement,
+  copyDefinition: copyItemDefinition
+};
 
 function cloneProjectDocument(document: ProjectDocument): ProjectDocument {
   return structuredClone(document);
@@ -163,6 +251,7 @@ export function createProjectDocument(
     roomLabels: [],
     openings: [],
     furniturePlacements: [],
+    fixturePlacements: [],
     extensions: {}
   };
   const document: ProjectDocument = {
@@ -172,6 +261,7 @@ export function createProjectDocument(
     units: "metric",
     activeLevelId: level.id,
     furnitureDefinitions: [],
+    fixtureDefinitions: [],
     levels: [level],
     extensions: {}
   };
@@ -501,44 +591,121 @@ export class ProjectWorkspace {
     definition: FurnitureDefinition,
     input: FurniturePlacementInput
   ): ProjectWorkspace {
-    const candidate = cloneProjectDocument(this.#document);
-    const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
-    if (!level) throw new Error("The active Level is missing from the Project Document.");
-
-    const embedded = candidate.furnitureDefinitions?.find(
-      ({ id }) => id === definition.id
-    );
-    if (!embedded) {
-      candidate.furnitureDefinitions ??= [];
-      candidate.furnitureDefinitions.push(structuredClone(definition));
-    }
-    level.furniturePlacements ??= [];
-    level.furniturePlacements.push({
-      id: this.#idFactory("furniture_placement"),
-      definitionId: definition.id,
-      position: { ...input.position },
-      rotationDeg: normalizeAngleDeg(input.rotationDeg ?? 0),
-      elevationMm: input.elevationMm ?? 0,
-      extensions: {}
-    });
-    return this.#acceptCandidate(candidate);
+    return this.#placeItem(definition, input, FURNITURE_PLACEMENT_MECHANICS);
   }
 
   updateFurniturePlacement(
     id: string,
     update: FurniturePlacementUpdate
   ): ProjectWorkspace {
+    return this.#updateItemPlacement(
+      id,
+      update,
+      FURNITURE_PLACEMENT_MECHANICS
+    );
+  }
+
+  updateFurnitureDefinition(
+    id: string,
+    update: FurnitureDefinitionUpdate
+  ): ProjectWorkspace {
+    return this.#updateItemDefinition(
+      id,
+      update,
+      FURNITURE_PLACEMENT_MECHANICS
+    );
+  }
+
+  makeFurniturePlacementUnique(id: string): ProjectWorkspace {
+    return this.#makeItemPlacementUnique(
+      id,
+      FURNITURE_PLACEMENT_MECHANICS
+    );
+  }
+
+  deleteFurniturePlacement(id: string): ProjectWorkspace {
+    return this.#deleteItemPlacement(id, FURNITURE_PLACEMENT_MECHANICS);
+  }
+
+  placeFixture(
+    definition: FixtureDefinition,
+    input: FixturePlacementInput
+  ): ProjectWorkspace {
+    return this.#placeItem(definition, input, FIXTURE_PLACEMENT_MECHANICS);
+  }
+
+  updateFixturePlacement(
+    id: string,
+    update: FixturePlacementUpdate
+  ): ProjectWorkspace {
+    return this.#updateItemPlacement(id, update, FIXTURE_PLACEMENT_MECHANICS);
+  }
+
+  updateFixtureDefinition(
+    id: string,
+    update: FixtureDefinitionUpdate
+  ): ProjectWorkspace {
+    return this.#updateItemDefinition(
+      id,
+      update,
+      FIXTURE_PLACEMENT_MECHANICS
+    );
+  }
+
+  makeFixturePlacementUnique(id: string): ProjectWorkspace {
+    return this.#makeItemPlacementUnique(id, FIXTURE_PLACEMENT_MECHANICS);
+  }
+
+  deleteFixturePlacement(id: string): ProjectWorkspace {
+    return this.#deleteItemPlacement(id, FIXTURE_PLACEMENT_MECHANICS);
+  }
+
+  #placeItem<
+    Definition extends FurnitureDefinition | FixtureDefinition,
+    Placement extends FurniturePlacement | FixturePlacement
+  >(
+    definition: Definition,
+    input: FurniturePlacementInput,
+    mechanics: PlacementMechanics<Definition, Placement>
+  ): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
+    if (!level) throw new Error("The active Level is missing from the Project Document.");
+
+    if (!mechanics.definitions(candidate)?.some(({ id }) => id === definition.id)) {
+      mechanics.ensureDefinitions(candidate).push(structuredClone(definition));
+    }
+    mechanics.ensurePlacements(level).push(mechanics.createPlacement(
+      this.#idFactory(mechanics.placementIdKind),
+      definition.id,
+      input
+    ));
+    return this.#acceptCandidate(candidate);
+  }
+
+  #updateItemPlacement<
+    Definition extends FurnitureDefinition | FixtureDefinition,
+    Placement extends FurniturePlacement | FixturePlacement
+  >(
+    id: string,
+    update: FurniturePlacementUpdate,
+    mechanics: PlacementMechanics<Definition, Placement>
+  ): ProjectWorkspace {
     const unsupportedKeys = Object.keys(update).filter(
       (key) => !["position", "rotationDeg", "elevationMm"].includes(key)
     );
     if (unsupportedKeys.length) {
-      throw new Error("Furniture Placement dimension overrides are not supported.");
+      throw new Error(
+        `${mechanics.label} Placement dimension overrides are not supported.`
+      );
     }
     return this.#replaceActiveLevel((level) => {
-      const placement = level.furniturePlacements?.find(
+      const placement = mechanics.placements(level)?.find(
         (candidate) => candidate.id === id
       );
-      if (!placement) throw new Error(`Furniture Placement "${id}" does not exist.`);
+      if (!placement) {
+        throw new Error(`${mechanics.label} Placement "${id}" does not exist.`);
+      }
       if (update.position) placement.position = { ...update.position };
       if (update.rotationDeg !== undefined) {
         placement.rotationDeg = normalizeAngleDeg(update.rotationDeg);
@@ -547,17 +714,26 @@ export class ProjectWorkspace {
     });
   }
 
-  updateFurnitureDefinition(
+  #updateItemDefinition<
+    Definition extends FurnitureDefinition | FixtureDefinition,
+    Placement extends FurniturePlacement | FixturePlacement
+  >(
     id: string,
-    update: FurnitureDefinitionUpdate
+    update: FurnitureDefinitionUpdate,
+    mechanics: PlacementMechanics<Definition, Placement>
   ): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
-    const definition = candidate.furnitureDefinitions?.find(
+    const definition = mechanics.definitions(candidate)?.find(
       (item) => item.id === id
     );
-    if (!definition) throw new Error(`Furniture Definition "${id}" does not exist.`);
+    if (!definition) {
+      throw new Error(`${mechanics.label} Definition "${id}" does not exist.`);
+    }
     if (update.name !== undefined) {
-      definition.name = assertNonEmptyName(update.name, "Furniture Definition");
+      definition.name = assertNonEmptyName(
+        update.name,
+        `${mechanics.label} Definition`
+      );
     }
     if (update.widthMm !== undefined) definition.widthMm = update.widthMm;
     if (update.depthMm !== undefined) definition.depthMm = update.depthMm;
@@ -565,42 +741,57 @@ export class ProjectWorkspace {
     return this.#acceptCandidate(candidate);
   }
 
-  makeFurniturePlacementUnique(id: string): ProjectWorkspace {
+  #makeItemPlacementUnique<
+    Definition extends FurnitureDefinition | FixtureDefinition,
+    Placement extends FurniturePlacement | FixturePlacement
+  >(
+    id: string,
+    mechanics: PlacementMechanics<Definition, Placement>
+  ): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
-    const level = candidate.levels.find(({ id: levelId }) =>
-      levelId === candidate.activeLevelId
+    const level = candidate.levels.find(
+      ({ id: levelId }) => levelId === candidate.activeLevelId
     );
     if (!level) throw new Error("The active Level is missing from the Project Document.");
-    const placement = level.furniturePlacements?.find(({ id: placementId }) =>
-      placementId === id
+    const placement = mechanics.placements(level)?.find(
+      ({ id: placementId }) => placementId === id
     );
-    if (!placement) throw new Error(`Furniture Placement "${id}" does not exist.`);
-    const definition = candidate.furnitureDefinitions?.find(
+    if (!placement) {
+      throw new Error(`${mechanics.label} Placement "${id}" does not exist.`);
+    }
+    const definition = mechanics.definitions(candidate)?.find(
       ({ id: definitionId }) => definitionId === placement.definitionId
     );
     if (!definition) {
-      throw new Error(`Furniture Definition "${placement.definitionId}" does not exist.`);
+      throw new Error(
+        `${mechanics.label} Definition "${placement.definitionId}" does not exist.`
+      );
     }
-    const copy = {
-      ...structuredClone(definition),
-      id: this.#idFactory("furniture_definition"),
-      name: `${definition.name} copy`
-    };
-    candidate.furnitureDefinitions ??= [];
-    candidate.furnitureDefinitions.push(copy);
+    const copy = mechanics.copyDefinition(
+      definition,
+      this.#idFactory(mechanics.definitionIdKind)
+    );
+    mechanics.ensureDefinitions(candidate).push(copy);
     placement.definitionId = copy.id;
     return this.#acceptCandidate(candidate);
   }
 
-  deleteFurniturePlacement(id: string): ProjectWorkspace {
+  #deleteItemPlacement<
+    Definition extends FurnitureDefinition | FixtureDefinition,
+    Placement extends FurniturePlacement | FixturePlacement
+  >(
+    id: string,
+    mechanics: PlacementMechanics<Definition, Placement>
+  ): ProjectWorkspace {
     return this.#replaceActiveLevel((level) => {
-      const count = level.furniturePlacements?.length ?? 0;
-      level.furniturePlacements = (level.furniturePlacements ?? []).filter(
+      const placements = mechanics.placements(level) ?? [];
+      const remaining = placements.filter(
         (placement) => placement.id !== id
       );
-      if (count === level.furniturePlacements.length) {
-        throw new Error(`Furniture Placement "${id}" does not exist.`);
+      if (placements.length === remaining.length) {
+        throw new Error(`${mechanics.label} Placement "${id}" does not exist.`);
       }
+      mechanics.replacePlacements(level, remaining);
     });
   }
 

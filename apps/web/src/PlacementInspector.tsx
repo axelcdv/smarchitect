@@ -1,4 +1,8 @@
 import {
+  type FixtureDefinition,
+  type FixtureDefinitionUpdate,
+  type FixturePlacement,
+  type FixturePlacementUpdate,
   type FurnitureDefinition,
   type FurnitureDefinitionUpdate,
   type FurniturePlacement,
@@ -6,35 +10,52 @@ import {
 } from "@smarchitect/core";
 import { BufferedInput } from "./BufferedInput.js";
 
-interface FurniturePlacementInspectorProps {
-  definition: FurnitureDefinition;
+interface PlacementInspectorProps {
+  definition: FurnitureDefinition | FixtureDefinition;
   disabled: boolean;
-  libraryDefinition?: FurnitureDefinition;
-  placement: FurniturePlacement;
+  kind?: "Furniture" | "Fixture";
+  libraryDefinition?: FurnitureDefinition | FixtureDefinition;
+  placement: FurniturePlacement | FixturePlacement;
   onDelete(): void;
   onMakeUnique(): void;
-  onUpdateDefinition(update: FurnitureDefinitionUpdate): void;
-  onUpdatePlacement(update: FurniturePlacementUpdate): void;
+  onUpdateDefinition(
+    update: FurnitureDefinitionUpdate | FixtureDefinitionUpdate
+  ): void;
+  onUpdatePlacement(
+    update: FurniturePlacementUpdate | FixturePlacementUpdate
+  ): void;
 }
 
-export function FurniturePlacementInspector({
+export function PlacementInspector({
   definition,
   disabled,
+  kind = "Furniture",
   libraryDefinition,
   placement,
   onDelete,
   onMakeUnique,
   onUpdateDefinition,
   onUpdatePlacement
-}: FurniturePlacementInspectorProps) {
+}: PlacementInspectorProps) {
   return (
-    <div className="furniture-properties" aria-label="Selected Furniture Placement properties">
+    <div className="furniture-properties" aria-label={`Selected ${kind} Placement properties`}>
       <h3>{definition.name}</h3>
+      <label>
+        <span>{kind} name</span>
+        <input
+          aria-label={`${kind} name`}
+          disabled={disabled}
+          value={definition.name}
+          onChange={(event) => onUpdateDefinition({
+            name: event.target.value
+          })}
+        />
+      </label>
       {([
-        ["x", "Furniture X (mm)", placement.position.x],
-        ["y", "Furniture Y (mm)", placement.position.y],
-        ["rotationDeg", "Furniture rotation (deg)", placement.rotationDeg],
-        ["elevationMm", "Furniture elevation (mm)", placement.elevationMm]
+        ["x", `${kind} X (mm)`, placement.position.x],
+        ["y", `${kind} Y (mm)`, placement.position.y],
+        ["rotationDeg", `${kind} rotation (deg)`, placement.rotationDeg],
+        ["elevationMm", `${kind} elevation (mm)`, placement.elevationMm]
       ] as const).map(([field, label, value]) => (
         <label key={field}>
           <span>{label}</span>
@@ -57,9 +78,9 @@ export function FurniturePlacementInspector({
         </label>
       ))}
       {([
-        ["widthMm", "Furniture width (mm)"],
-        ["depthMm", "Furniture depth (mm)"],
-        ["heightMm", "Furniture height (mm)"]
+        ["widthMm", `${kind} width (mm)`],
+        ["depthMm", `${kind} depth (mm)`],
+        ["heightMm", `${kind} height (mm)`]
       ] as const).map(([field, label]) => (
         <label key={field}>
           <span>{label}</span>
@@ -99,7 +120,7 @@ export function FurniturePlacementInspector({
         disabled={disabled}
         onClick={onDelete}
       >
-        Delete Furniture Placement
+        Delete {kind} Placement
       </button>
     </div>
   );
