@@ -216,6 +216,70 @@ h2 {
   border-right: 1px solid var(--line);
 }
 
+.proposal-manager {
+  display: grid;
+  gap: 8px;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+
+.proposal-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.proposal-heading h2 {
+  font-size: 16px;
+}
+
+.proposal-heading span,
+.proposal-option small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.proposal-option {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  border: 1px solid var(--line);
+  background: #fffef9;
+  color: var(--ink);
+  padding: 10px;
+  text-align: left;
+}
+
+.proposal-option.active {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 var(--accent);
+}
+
+.proposal-create,
+.active-proposal-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.proposal-create input {
+  min-width: 0;
+  border: 1px solid #bdb9ae;
+  background: #fffef9;
+  padding: 10px;
+}
+
+.proposal-stale {
+  margin: 4px 0 0;
+  border-left: 3px solid #b97912;
+  background: #fff3d6;
+  color: #76500f;
+  padding: 9px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .level-card {
   display: flex;
   gap: 12px;

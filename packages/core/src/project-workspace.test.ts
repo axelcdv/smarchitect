@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { stringify } from "yaml";
 import {
   CURRENT_SCHEMA_VERSION,
   ProjectValidationError,
@@ -18,7 +19,10 @@ function deterministicIdFactory(): IdFactory {
     "room-label": 8,
     opening: 5,
     furniture_definition: 5,
-    furniture_placement: 6
+    furniture_placement: 6,
+    fixture_definition: 7,
+    fixture_placement: 8,
+    design_proposal: 12
   };
   return (kind) => {
     const value = next[kind]++;
@@ -73,9 +77,236 @@ function deterministicFixtureIdFactory(): () => string {
 }
 
 describe("Project Workspace acceptance seam", () => {
+  it("keeps several complete Design Proposals independent", () => {
+    const now = new Date("2026-07-31T10:00:00.000Z");
+    let workspace = ProjectWorkspace.create("Alternatives", {
+      idFactory: deterministicIdFactory(),
+      now: () => now
+    })
+      .addWall({
+        start: { x: 0, y: 0 },
+        end: { x: 4000, y: 0 }
+      })
+      .addRoomLabel({ name: "Living room", position: { x: 1000, y: 1000 } });
+    workspace = workspace
+      .placeFurniture({
+        id: "furniture_definition_00000000-0000-4000-8000-000000000010",
+        name: "Sofa",
+        widthMm: 2000,
+        depthMm: 900,
+        heightMm: 800,
+        extensions: {}
+      }, { position: { x: 500, y: 500 } })
+      .placeFixture({
+        id: "fixture_definition_00000000-0000-4000-8000-000000000011",
+        name: "Radiator",
+        widthMm: 1000,
+        depthMm: 150,
+        heightMm: 600,
+        extensions: {}
+      }, { position: { x: 2500, y: 300 } });
+
+    const existing = workspace.document;
+    const first = workspace.createDesignProposal("Open kitchen");
+    const firstId = first.activeDesignProposal!.id;
+    const second = first
+      .selectExistingState()
+      .createDesignProposal("Separate kitchen");
+    const secondId = second.activeDesignProposal!.id;
+
+    expect(second.document.designProposals).toHaveLength(2);
+    expect(second.activeDesignProposal).toMatchObject({
+      id: secondId,
+      name: "Separate kitchen",
+      sourceRevision: existing.existingStateRevision,
+      sourceRevisedAt: existing.existingStateRevisedAt,
+      levels: existing.levels,
+      furnitureDefinitions: existing.furnitureDefinitions,
+      fixtureDefinitions: existing.fixtureDefinitions
+    });
+    expect(second.document.designProposals![0]).toMatchObject({
+      id: firstId,
+      name: "Open kitchen",
+      levels: existing.levels
+    });
+
+    const editedFirst = second
+      .selectDesignProposal(firstId)
+      .addWall({
+        start: { x: 0, y: 1000 },
+        end: { x: 4000, y: 1000 }
+      })
+      .renameDesignProposal(firstId, "Kitchen opened");
+
+    expect(editedFirst.activeLevel.walls).toHaveLength(2);
+    expect(editedFirst.document.levels).toEqual(existing.levels);
+    expect(editedFirst.document.designProposals![1]!.levels)
+      .toEqual(existing.levels);
+    expect(editedFirst.activeDesignProposal?.name).toBe("Kitchen opened");
+
+    const deleted = editedFirst.deleteDesignProposal(firstId);
+    expect(deleted.activePlanSelection).toEqual({ kind: "existing-state" });
+    expect(deleted.document.designProposals?.map(({ id }) => id))
+      .toEqual([secondId]);
+  });
+
+  it("marks proposals stale after Existing State corrections", () => {
+    let currentTime = new Date("2026-07-31T10:00:00.000Z");
+    const workspace = ProjectWorkspace.create("Staleness", {
+      idFactory: deterministicIdFactory(),
+      now: () => currentTime
+    }).addWall({
+      start: { x: 0, y: 0 },
+      end: { x: 3000, y: 0 }
+    });
+    const proposal = workspace.createDesignProposal("Before correction");
+    const proposalId = proposal.activeDesignProposal!.id;
+    const proposalLevels = proposal.activeDesignProposal!.levels;
+
+    currentTime = new Date("2026-08-01T11:30:00.000Z");
+    const corrected = proposal
+      .selectExistingState()
+      .updateWall(workspace.activeLevel.walls[0]!.id, { lengthMm: 4200 })
+      .selectDesignProposal(proposalId);
+
+    expect(corrected.activeDesignProposal?.levels).toEqual(proposalLevels);
+    expect(corrected.activeProposalStaleness).toEqual({
+      stale: true,
+      sourceRevision: workspace.document.existingStateRevision,
+      sourceRevisedAt: "2026-07-31T10:00:00.000Z",
+      currentRevision: corrected.document.existingStateRevision,
+      currentRevisedAt: "2026-08-01T11:30:00.000Z"
+    });
+  });
+
+  it("roots active Design Proposal warnings at the proposal document path", () => {
+    const workspace = ProjectWorkspace.create("Proposal diagnostics", {
+      idFactory: deterministicIdFactory()
+    })
+      .addRoomLabel({
+        name: "Outside",
+        position: { x: 1000, y: 1000 }
+      })
+      .createDesignProposal("Alternative");
+
+    expect(workspace.diagnostics).toContainEqual(expect.objectContaining({
+      code: "room-label.outside-room",
+      path: "/designProposals/0/levels/0/roomLabels/0/position"
+    }));
+  });
+
+  it("protects the Design Proposal schema and stable-reference contract", () => {
+    const workspace = ProjectWorkspace.create("Proposal contract", {
+      idFactory: deterministicIdFactory()
+    }).createDesignProposal("Extended alternative");
+    const document = workspace.document;
+    const proposal = document.designProposals![0]!;
+    proposal.extensions["https://example.com/smarchitect/proposal-notes"] = {
+      note: "Preserved"
+    };
+
+    expect(validateProjectDocument(document)).toEqual([]);
+    expect(
+      ProjectWorkspace.importYaml(stringify(document))
+        .document.designProposals![0]!.extensions
+    ).toEqual({
+      "https://example.com/smarchitect/proposal-notes": {
+        note: "Preserved"
+      }
+    });
+
+    const unnamespacedExtension = structuredClone(document);
+    unnamespacedExtension.designProposals![0]!.extensions.notes = {
+      note: "Rejected"
+    };
+    expect(validateProjectDocument(unnamespacedExtension)).toContainEqual(
+      expect.objectContaining({
+        code: "schema.invalid",
+        path: "/designProposals/0/extensions"
+      })
+    );
+
+    const malformedId = structuredClone(document);
+    malformedId.designProposals![0]!.id = "proposal-not-stable";
+    expect(validateProjectDocument(malformedId)).toContainEqual(
+      expect.objectContaining({
+        code: "stable-id.invalid",
+        path: "/designProposals/0/id"
+      })
+    );
+
+    const danglingSelection = structuredClone(document);
+    danglingSelection.activePlan = {
+      kind: "design-proposal",
+      proposalId: "design_proposal_00000000-0000-4000-8000-000000000099"
+    };
+    expect(validateProjectDocument(danglingSelection)).toContainEqual(
+      expect.objectContaining({
+        code: "active-plan.proposal.missing",
+        path: "/activePlan/proposalId"
+      })
+    );
+
+    const unknownField = structuredClone(document) as unknown as {
+      designProposals: Array<Record<string, unknown>>;
+    };
+    unknownField.designProposals[0]!.comparisonMode = true;
+    expect(validateProjectDocument(unknownField)).toContainEqual(
+      expect.objectContaining({
+        code: "schema.invalid",
+        path: "/designProposals/0"
+      })
+    );
+  });
+
+  it("rejects missing, invalid, and impossible Design Proposal provenance", () => {
+    const document = ProjectWorkspace.create("Proposal provenance", {
+      idFactory: deterministicIdFactory(),
+      now: () => new Date("2026-07-31T10:00:00.000Z")
+    }).createDesignProposal("Alternative").document;
+
+    const missingExistingStateProvenance = structuredClone(document);
+    delete missingExistingStateProvenance.existingStateRevision;
+    delete missingExistingStateProvenance.existingStateRevisedAt;
+    expect(validateProjectDocument(missingExistingStateProvenance)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "/existingStateRevision" }),
+        expect.objectContaining({ path: "/existingStateRevisedAt" })
+      ])
+    );
+
+    const invalidTimestamp = structuredClone(document);
+    invalidTimestamp.designProposals![0]!.sourceRevisedAt = "nope";
+    expect(validateProjectDocument(invalidTimestamp)).toContainEqual(
+      expect.objectContaining({
+        code: "schema.invalid",
+        path: "/designProposals/0/sourceRevisedAt"
+      })
+    );
+
+    const invalidExistingStateTimestamp = structuredClone(document);
+    invalidExistingStateTimestamp.existingStateRevisedAt = "nope";
+    expect(validateProjectDocument(invalidExistingStateTimestamp))
+      .toContainEqual(expect.objectContaining({
+        code: "schema.invalid",
+        path: "/existingStateRevisedAt"
+      }));
+
+    const futureRevision = structuredClone(document);
+    futureRevision.designProposals![0]!.sourceRevision =
+      futureRevision.existingStateRevision! + 1;
+    expect(validateProjectDocument(futureRevision)).toContainEqual({
+      code: "design-proposal.source-revision.future",
+      severity: "error",
+      path: "/designProposals/0/sourceRevision",
+      message: "Design Proposal source revision must not be newer than the Existing State."
+    });
+  });
+
   it("creates a valid metric project with one active Level", () => {
     const document = createProjectDocument("My renovation", {
-      idFactory: deterministicIdFactory()
+      idFactory: deterministicIdFactory(),
+      now: () => new Date("2026-07-31T10:00:00.000Z")
     });
 
     expect(document).toEqual({
@@ -86,6 +317,10 @@ describe("Project Workspace acceptance seam", () => {
       activeLevelId: "level_00000000-0000-4000-8000-000000000002",
       furnitureDefinitions: [],
       fixtureDefinitions: [],
+      existingStateRevision: 0,
+      existingStateRevisedAt: "2026-07-31T10:00:00.000Z",
+      activePlan: { kind: "existing-state" },
+      designProposals: [],
       levels: [
         {
           id: "level_00000000-0000-4000-8000-000000000002",

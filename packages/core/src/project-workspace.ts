@@ -2,6 +2,8 @@ import { parseDocument, stringify, type Document } from "yaml";
 import {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
+  type ActivePlanSelection,
+  type DesignProposal,
   type Diagnostic,
   type FixtureDefinition,
   type FixtureDefinitionUpdate,
@@ -20,6 +22,8 @@ import {
   type OpeningInput,
   type OpeningUpdate,
   type PointMm,
+  type PlanSnapshot,
+  type ProposalStaleness,
   type ProjectDocument,
   type Room,
   type RoomLabelInput,
@@ -46,8 +50,8 @@ interface PlacementMechanics<
   label: "Furniture" | "Fixture";
   definitionIdKind: "furniture_definition" | "fixture_definition";
   placementIdKind: "furniture_placement" | "fixture_placement";
-  definitions(document: ProjectDocument): Definition[] | undefined;
-  ensureDefinitions(document: ProjectDocument): Definition[];
+  definitions(plan: PlanSnapshot): Definition[] | undefined;
+  ensureDefinitions(plan: PlanSnapshot): Definition[];
   placements(level: Level): Placement[] | undefined;
   ensurePlacements(level: Level): Placement[];
   replacePlacements(level: Level, placements: Placement[]): void;
@@ -123,6 +127,42 @@ const FIXTURE_PLACEMENT_MECHANICS: PlacementMechanics<
 
 function cloneProjectDocument(document: ProjectDocument): ProjectDocument {
   return structuredClone(document);
+}
+
+function selectedProposal(document: ProjectDocument): DesignProposal | undefined {
+  if (document.activePlan?.kind !== "design-proposal") return undefined;
+  const proposalId = document.activePlan.proposalId;
+  return document.designProposals?.find(
+    ({ id }) => id === proposalId
+  );
+}
+
+function selectedPlan(document: ProjectDocument): PlanSnapshot {
+  return selectedProposal(document) ?? document;
+}
+
+function selectedPlanPath(document: ProjectDocument): string {
+  if (document.activePlan?.kind !== "design-proposal") return "";
+  const proposalId = document.activePlan.proposalId;
+  const proposalIndex = document.designProposals?.findIndex(
+    ({ id }) => id === proposalId
+  ) ?? -1;
+  return proposalIndex >= 0 ? `/designProposals/${proposalIndex}` : "";
+}
+
+function revisionOf(document: ProjectDocument): number {
+  return document.existingStateRevision ?? 0;
+}
+
+function revisedAtOf(document: ProjectDocument): string {
+  return document.existingStateRevisedAt ?? new Date(0).toISOString();
+}
+
+function normalizePlan(plan: PlanSnapshot): void {
+  for (const level of plan.levels) {
+    level.roomLabels ??= [];
+    level.openings ??= [];
+  }
 }
 
 function valuesMatch(left: unknown, right: unknown): boolean {
@@ -263,6 +303,10 @@ export function createProjectDocument(
     furnitureDefinitions: [],
     fixtureDefinitions: [],
     levels: [level],
+    existingStateRevision: 0,
+    existingStateRevisedAt: (options.now ?? (() => new Date()))().toISOString(),
+    activePlan: { kind: "existing-state" },
+    designProposals: [],
     extensions: {}
   };
   const diagnostics = validateProjectDocument(document);
@@ -288,15 +332,18 @@ export class ProjectWorkspace {
   #document: ProjectDocument;
   #idFactory: IdFactory;
   #source: string;
+  #now: () => Date;
 
   private constructor(
     document: ProjectDocument,
     idFactory: IdFactory = defaultIdFactory,
-    source: string = stringify(document, { lineWidth: 0 })
+    source: string = stringify(document, { lineWidth: 0 }),
+    now: () => Date = () => new Date()
   ) {
     this.#document = cloneProjectDocument(document);
     this.#idFactory = idFactory;
     this.#source = source;
+    this.#now = now;
   }
 
   static create(
@@ -305,7 +352,9 @@ export class ProjectWorkspace {
   ): ProjectWorkspace {
     return new ProjectWorkspace(
       createProjectDocument(name, options),
-      options.idFactory ?? defaultIdFactory
+      options.idFactory ?? defaultIdFactory,
+      undefined,
+      options.now
     );
   }
 
@@ -317,10 +366,12 @@ export class ProjectWorkspace {
     }
 
     const document = cloneProjectDocument(result.document);
-    for (const level of document.levels) {
-      level.roomLabels ??= [];
-      level.openings ??= [];
-    }
+    normalizePlan(document);
+    for (const proposal of document.designProposals ?? []) normalizePlan(proposal);
+    document.existingStateRevision ??= 0;
+    document.existingStateRevisedAt ??= new Date(0).toISOString();
+    document.activePlan ??= { kind: "existing-state" };
+    document.designProposals ??= [];
     return new ProjectWorkspace(document, defaultIdFactory, source);
   }
 
@@ -329,8 +380,9 @@ export class ProjectWorkspace {
   }
 
   get activeLevel(): Level {
-    const level = this.#document.levels.find(
-      ({ id }) => id === this.#document.activeLevelId
+    const plan = selectedPlan(this.#document);
+    const level = plan.levels.find(
+      ({ id }) => id === plan.activeLevelId
     );
 
     if (!level) {
@@ -342,10 +394,12 @@ export class ProjectWorkspace {
 
   get diagnostics(): Diagnostic[] {
     const diagnostics = validateProjectDocument(this.#document);
-    const levelIndex = this.#document.levels.findIndex(
-      ({ id }) => id === this.#document.activeLevelId
+    const plan = selectedPlan(this.#document);
+    const planPath = selectedPlanPath(this.#document);
+    const levelIndex = plan.levels.findIndex(
+      ({ id }) => id === plan.activeLevelId
     );
-    const level = this.#document.levels[levelIndex];
+    const level = plan.levels[levelIndex];
     if (!level) return diagnostics;
     const rooms = deriveRooms(level.walls, level.roomLabels);
     for (const [labelIndex, label] of level.roomLabels.entries()) {
@@ -353,7 +407,7 @@ export class ProjectWorkspace {
         diagnostics.push({
           code: "room-label.outside-room",
           severity: "warning",
-          path: `/levels/${levelIndex}/roomLabels/${labelIndex}/position`,
+          path: `${planPath}/levels/${levelIndex}/roomLabels/${labelIndex}/position`,
           message: `Room Label "${label.name}" is outside every enclosed Room. Move it inside a Room or delete it.`
         });
       }
@@ -367,7 +421,7 @@ export class ProjectWorkspace {
         diagnostics.push({
           code: "room-label.merge-conflict",
           severity: "warning",
-          path: `/levels/${levelIndex}/roomLabels`,
+          path: `${planPath}/levels/${levelIndex}/roomLabels`,
           message: `Merged Room contains multiple labels (${names}). Move or delete labels to choose one explicitly.`
         });
       }
@@ -380,6 +434,34 @@ export class ProjectWorkspace {
     return deriveRooms(level.walls, level.roomLabels);
   }
 
+  get activePlanSelection(): ActivePlanSelection {
+    return structuredClone(
+      this.#document.activePlan ?? { kind: "existing-state" }
+    );
+  }
+
+  get activePlan(): PlanSnapshot {
+    return structuredClone(selectedPlan(this.#document));
+  }
+
+  get activeDesignProposal(): DesignProposal | undefined {
+    const proposal = selectedProposal(this.#document);
+    return proposal ? structuredClone(proposal) : undefined;
+  }
+
+  get activeProposalStaleness(): ProposalStaleness | undefined {
+    const proposal = selectedProposal(this.#document);
+    if (!proposal) return undefined;
+    const currentRevision = revisionOf(this.#document);
+    return {
+      stale: proposal.sourceRevision < currentRevision,
+      sourceRevision: proposal.sourceRevision,
+      sourceRevisedAt: proposal.sourceRevisedAt,
+      currentRevision,
+      currentRevisedAt: revisedAtOf(this.#document)
+    };
+  }
+
   #acceptCandidate(candidate: ProjectDocument): ProjectWorkspace {
     const diagnostics = validateProjectDocument(candidate);
 
@@ -390,7 +472,8 @@ export class ProjectWorkspace {
     return new ProjectWorkspace(
       candidate,
       this.#idFactory,
-      updateYamlSource(this.#source, this.#document, candidate)
+      updateYamlSource(this.#source, this.#document, candidate),
+      this.#now
     );
   }
 
@@ -402,13 +485,89 @@ export class ProjectWorkspace {
 
   #replaceActiveLevel(update: (level: Level) => void): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
-    const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
+    const plan = selectedPlan(candidate);
+    const level = plan.levels.find(({ id }) => id === plan.activeLevelId);
 
     if (!level) {
       throw new Error("The active Level is missing from the Project Document.");
     }
 
     update(level);
+    this.#recordExistingStateCorrection(candidate);
+    return this.#acceptCandidate(candidate);
+  }
+
+  #recordExistingStateCorrection(candidate: ProjectDocument): void {
+    if ((candidate.activePlan?.kind ?? "existing-state") !== "existing-state") {
+      return;
+    }
+    candidate.existingStateRevision = revisionOf(candidate) + 1;
+    candidate.existingStateRevisedAt = this.#now().toISOString();
+  }
+
+  createDesignProposal(name: string): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const proposal: DesignProposal = {
+      id: this.#idFactory("design_proposal"),
+      name: assertNonEmptyName(name, "Design Proposal"),
+      sourceRevision: revisionOf(candidate),
+      sourceRevisedAt: revisedAtOf(candidate),
+      activeLevelId: candidate.activeLevelId,
+      furnitureDefinitions: structuredClone(candidate.furnitureDefinitions ?? []),
+      fixtureDefinitions: structuredClone(candidate.fixtureDefinitions ?? []),
+      levels: structuredClone(candidate.levels),
+      extensions: {}
+    };
+    candidate.designProposals ??= [];
+    candidate.designProposals.push(proposal);
+    candidate.activePlan = {
+      kind: "design-proposal",
+      proposalId: proposal.id
+    };
+    return this.#acceptCandidate(candidate);
+  }
+
+  renameDesignProposal(id: string, name: string): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const proposal = candidate.designProposals?.find(
+      ({ id: proposalId }) => proposalId === id
+    );
+    if (!proposal) throw new Error(`Design Proposal "${id}" does not exist.`);
+    proposal.name = assertNonEmptyName(name, "Design Proposal");
+    return this.#acceptCandidate(candidate);
+  }
+
+  selectExistingState(): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    candidate.activePlan = { kind: "existing-state" };
+    return this.#acceptCandidate(candidate);
+  }
+
+  selectDesignProposal(id: string): ProjectWorkspace {
+    if (!this.#document.designProposals?.some(
+      ({ id: proposalId }) => proposalId === id
+    )) {
+      throw new Error(`Design Proposal "${id}" does not exist.`);
+    }
+    const candidate = cloneProjectDocument(this.#document);
+    candidate.activePlan = { kind: "design-proposal", proposalId: id };
+    return this.#acceptCandidate(candidate);
+  }
+
+  deleteDesignProposal(id: string): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    const proposals = candidate.designProposals ?? [];
+    const remaining = proposals.filter(({ id: proposalId }) => proposalId !== id);
+    if (remaining.length === proposals.length) {
+      throw new Error(`Design Proposal "${id}" does not exist.`);
+    }
+    candidate.designProposals = remaining;
+    if (
+      candidate.activePlan?.kind === "design-proposal"
+      && candidate.activePlan.proposalId === id
+    ) {
+      candidate.activePlan = { kind: "existing-state" };
+    }
     return this.#acceptCandidate(candidate);
   }
 
@@ -669,17 +828,19 @@ export class ProjectWorkspace {
     mechanics: PlacementMechanics<Definition, Placement>
   ): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
-    const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
+    const plan = selectedPlan(candidate);
+    const level = plan.levels.find(({ id }) => id === plan.activeLevelId);
     if (!level) throw new Error("The active Level is missing from the Project Document.");
 
-    if (!mechanics.definitions(candidate)?.some(({ id }) => id === definition.id)) {
-      mechanics.ensureDefinitions(candidate).push(structuredClone(definition));
+    if (!mechanics.definitions(plan)?.some(({ id }) => id === definition.id)) {
+      mechanics.ensureDefinitions(plan).push(structuredClone(definition));
     }
     mechanics.ensurePlacements(level).push(mechanics.createPlacement(
       this.#idFactory(mechanics.placementIdKind),
       definition.id,
       input
     ));
+    this.#recordExistingStateCorrection(candidate);
     return this.#acceptCandidate(candidate);
   }
 
@@ -723,7 +884,8 @@ export class ProjectWorkspace {
     mechanics: PlacementMechanics<Definition, Placement>
   ): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
-    const definition = mechanics.definitions(candidate)?.find(
+    const plan = selectedPlan(candidate);
+    const definition = mechanics.definitions(plan)?.find(
       (item) => item.id === id
     );
     if (!definition) {
@@ -738,6 +900,7 @@ export class ProjectWorkspace {
     if (update.widthMm !== undefined) definition.widthMm = update.widthMm;
     if (update.depthMm !== undefined) definition.depthMm = update.depthMm;
     if (update.heightMm !== undefined) definition.heightMm = update.heightMm;
+    this.#recordExistingStateCorrection(candidate);
     return this.#acceptCandidate(candidate);
   }
 
@@ -749,8 +912,9 @@ export class ProjectWorkspace {
     mechanics: PlacementMechanics<Definition, Placement>
   ): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
-    const level = candidate.levels.find(
-      ({ id: levelId }) => levelId === candidate.activeLevelId
+    const plan = selectedPlan(candidate);
+    const level = plan.levels.find(
+      ({ id: levelId }) => levelId === plan.activeLevelId
     );
     if (!level) throw new Error("The active Level is missing from the Project Document.");
     const placement = mechanics.placements(level)?.find(
@@ -759,7 +923,7 @@ export class ProjectWorkspace {
     if (!placement) {
       throw new Error(`${mechanics.label} Placement "${id}" does not exist.`);
     }
-    const definition = mechanics.definitions(candidate)?.find(
+    const definition = mechanics.definitions(plan)?.find(
       ({ id: definitionId }) => definitionId === placement.definitionId
     );
     if (!definition) {
@@ -771,8 +935,9 @@ export class ProjectWorkspace {
       definition,
       this.#idFactory(mechanics.definitionIdKind)
     );
-    mechanics.ensureDefinitions(candidate).push(copy);
+    mechanics.ensureDefinitions(plan).push(copy);
     placement.definitionId = copy.id;
+    this.#recordExistingStateCorrection(candidate);
     return this.#acceptCandidate(candidate);
   }
 

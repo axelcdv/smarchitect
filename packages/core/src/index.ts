@@ -56,11 +56,13 @@ export {
 } from "./opening-geometry.js";
 export {
   CURRENT_SCHEMA_VERSION,
+  type ActivePlanSelection,
   type CreateFurnitureDefinitionOptions,
   type CreateFixtureDefinitionOptions,
   type CreateProjectDocumentOptions,
   type Diagnostic,
   type DiagnosticSeverity,
+  type DesignProposal,
   type EntityKind,
   type ExtensionData,
   type FurnitureDefinition,
@@ -90,6 +92,8 @@ export {
   type PassageOpening,
   type PathDirection,
   type ParseProjectDocumentResult,
+  type PlanSnapshot,
+  type ProposalStaleness,
   type ProjectDocument,
   type Room,
   type RoomLabel,

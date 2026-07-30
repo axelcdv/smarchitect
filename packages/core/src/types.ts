@@ -244,6 +244,25 @@ export interface Room {
   labelIds: string[];
 }
 
+export interface PlanSnapshot {
+  activeLevelId: string;
+  furnitureDefinitions?: FurnitureDefinition[];
+  fixtureDefinitions?: FixtureDefinition[];
+  levels: Level[];
+}
+
+export interface DesignProposal extends PlanSnapshot {
+  id: string;
+  name: string;
+  sourceRevision: number;
+  sourceRevisedAt: string;
+  extensions: ExtensionData;
+}
+
+export type ActivePlanSelection =
+  | { kind: "existing-state" }
+  | { kind: "design-proposal"; proposalId: string };
+
 export interface ProjectDocument {
   schemaVersion: SchemaVersion;
   id: string;
@@ -253,7 +272,19 @@ export interface ProjectDocument {
   furnitureDefinitions?: FurnitureDefinition[];
   fixtureDefinitions?: FixtureDefinition[];
   levels: Level[];
+  existingStateRevision?: number;
+  existingStateRevisedAt?: string;
+  activePlan?: ActivePlanSelection;
+  designProposals?: DesignProposal[];
   extensions: ExtensionData;
+}
+
+export interface ProposalStaleness {
+  stale: boolean;
+  sourceRevision: number;
+  sourceRevisedAt: string;
+  currentRevision: number;
+  currentRevisedAt: string;
 }
 
 export interface Diagnostic {
@@ -279,11 +310,13 @@ export type EntityKind =
   | "furniture_definition"
   | "furniture_placement"
   | "fixture_definition"
-  | "fixture_placement";
+  | "fixture_placement"
+  | "design_proposal";
 export type IdFactory = (kind: EntityKind) => string;
 
 export interface CreateProjectDocumentOptions {
   idFactory?: IdFactory;
+  now?: () => Date;
 }
 
 export interface CreateFurnitureDefinitionOptions {
