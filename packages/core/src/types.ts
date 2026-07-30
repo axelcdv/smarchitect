@@ -11,7 +11,7 @@ export interface Level {
   baseElevationMm: number;
   defaultWallHeightMm: number;
   walls: Wall[];
-  furniturePlacements: FurniturePlacement[];
+  furniturePlacements?: FurniturePlacement[];
   extensions: ExtensionData;
 }
 
@@ -59,6 +59,13 @@ export interface FurnitureDefinition {
   extensions: ExtensionData;
 }
 
+export interface FurnitureDefinitionInput {
+  name: string;
+  widthMm: number;
+  depthMm: number;
+  heightMm: number;
+}
+
 export type FurnitureDefinitionUpdate = Partial<
   Pick<FurnitureDefinition, "name" | "widthMm" | "depthMm" | "heightMm">
 >;
@@ -95,7 +102,7 @@ export interface ProjectDocument {
   name: string;
   units: MeasurementUnits;
   activeLevelId: string;
-  furnitureDefinitions: FurnitureDefinition[];
+  furnitureDefinitions?: FurnitureDefinition[];
   levels: Level[];
   extensions: ExtensionData;
 }
@@ -123,5 +130,9 @@ export type EntityKind =
 export type IdFactory = (kind: EntityKind) => string;
 
 export interface CreateProjectDocumentOptions {
+  idFactory?: IdFactory;
+}
+
+export interface CreateFurnitureDefinitionOptions {
   idFactory?: IdFactory;
 }

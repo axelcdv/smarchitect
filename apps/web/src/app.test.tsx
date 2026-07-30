@@ -232,4 +232,70 @@ describe("minimal Project Workspace", () => {
     fireEvent.click(screen.getByRole("button", { name: "Undo" }));
     expect(await screen.findByText("1 Furniture Placement")).toBeInTheDocument();
   });
+
+  it("synchronizes controlled Item Library fields after Undo and Redo", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Library history" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Library history" });
+
+    fireEvent.change(screen.getByLabelText("New Furniture name"), {
+      target: { value: "Chair" }
+    });
+    fireEvent.change(screen.getByLabelText("New Furniture widthMm"), {
+      target: { value: "450" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Furniture" }));
+
+    const name = await screen.findByLabelText("Chair name");
+    expect(screen.getByLabelText("Chair widthMm")).toHaveValue(450);
+    fireEvent.change(name, { target: { value: "Armchair" } });
+    fireEvent.blur(name);
+    await screen.findByLabelText("Armchair name");
+    fireEvent.change(screen.getByLabelText("Armchair widthMm"), {
+      target: { value: "600" }
+    });
+    fireEvent.blur(screen.getByLabelText("Armchair widthMm"));
+    await waitFor(() => expect(screen.getByLabelText("Armchair widthMm"))
+      .toHaveValue(600));
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo Item Library" }));
+    await waitFor(() => expect(screen.getByLabelText("Armchair widthMm"))
+      .toHaveValue(450));
+    fireEvent.click(screen.getByRole("button", { name: "Undo Item Library" }));
+    await waitFor(() => expect(screen.getByLabelText("Chair name"))
+      .toHaveValue("Chair"));
+    expect(screen.getByLabelText("Chair widthMm")).toHaveValue(450);
+
+    fireEvent.click(screen.getByRole("button", { name: "Redo Item Library" }));
+    await waitFor(() => expect(screen.getByLabelText("Armchair name"))
+      .toHaveValue("Armchair"));
+    fireEvent.click(screen.getByRole("button", { name: "Redo Item Library" }));
+    await waitFor(() => expect(screen.getByLabelText("Armchair widthMm"))
+      .toHaveValue(600));
+  });
+
+  it("rejects invalid Item Library dimensions at the browser acceptance seam", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Valid library" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Valid library" });
+
+    fireEvent.change(screen.getByLabelText("New Furniture name"), {
+      target: { value: "Broken chair" }
+    });
+    fireEvent.change(screen.getByLabelText("New Furniture widthMm"), {
+      target: { value: "0" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Furniture" }));
+
+    expect(await screen.findByText(/positive integer millimetres/i))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Place" }))
+      .not.toBeInTheDocument();
+  });
 });

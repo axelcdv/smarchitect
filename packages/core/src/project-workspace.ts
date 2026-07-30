@@ -3,7 +3,6 @@ import {
   CURRENT_SCHEMA_VERSION,
   type CreateProjectDocumentOptions,
   type Diagnostic,
-  type EntityKind,
   type FurnitureDefinition,
   type FurnitureDefinitionUpdate,
   type FurniturePlacementInput,
@@ -15,6 +14,7 @@ import {
   type WallInput,
   type WallUpdate
 } from "./types.js";
+import { defaultIdFactory } from "./id-factory.js";
 import {
   parseProjectDocument,
   validateProjectDocument
@@ -23,10 +23,6 @@ import { normalizeAngleDeg } from "./wall-geometry.js";
 
 const DEFAULT_LEVEL_NAME = "Ground floor";
 const DEFAULT_WALL_HEIGHT_MM = 2500;
-
-function defaultIdFactory(kind: EntityKind): string {
-  return `${kind}_${globalThis.crypto.randomUUID()}`;
-}
 
 function cloneProjectDocument(document: ProjectDocument): ProjectDocument {
   return structuredClone(document);
@@ -234,15 +230,14 @@ export class ProjectWorkspace {
     const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
     if (!level) throw new Error("The active Level is missing from the Project Document.");
 
-    const embedded = candidate.furnitureDefinitions.find(
+    const embedded = candidate.furnitureDefinitions?.find(
       ({ id }) => id === definition.id
     );
-    if (embedded && JSON.stringify(embedded) !== JSON.stringify(definition)) {
-      throw new Error(
-        `Furniture Definition "${definition.id}" differs from the embedded snapshot.`
-      );
+    if (!embedded) {
+      candidate.furnitureDefinitions ??= [];
+      candidate.furnitureDefinitions.push(structuredClone(definition));
     }
-    if (!embedded) candidate.furnitureDefinitions.push(structuredClone(definition));
+    level.furniturePlacements ??= [];
     level.furniturePlacements.push({
       id: this.#idFactory("furniture_placement"),
       definitionId: definition.id,
@@ -267,7 +262,7 @@ export class ProjectWorkspace {
       throw new Error("Furniture Placement dimension overrides are not supported.");
     }
     return this.#replaceActiveLevel((level) => {
-      const placement = level.furniturePlacements.find(
+      const placement = level.furniturePlacements?.find(
         (candidate) => candidate.id === id
       );
       if (!placement) throw new Error(`Furniture Placement "${id}" does not exist.`);
@@ -284,7 +279,7 @@ export class ProjectWorkspace {
     update: FurnitureDefinitionUpdate
   ): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
-    const definition = candidate.furnitureDefinitions.find(
+    const definition = candidate.furnitureDefinitions?.find(
       (item) => item.id === id
     );
     if (!definition) throw new Error(`Furniture Definition "${id}" does not exist.`);
@@ -305,11 +300,11 @@ export class ProjectWorkspace {
       levelId === candidate.activeLevelId
     );
     if (!level) throw new Error("The active Level is missing from the Project Document.");
-    const placement = level.furniturePlacements.find(({ id: placementId }) =>
+    const placement = level.furniturePlacements?.find(({ id: placementId }) =>
       placementId === id
     );
     if (!placement) throw new Error(`Furniture Placement "${id}" does not exist.`);
-    const definition = candidate.furnitureDefinitions.find(
+    const definition = candidate.furnitureDefinitions?.find(
       ({ id: definitionId }) => definitionId === placement.definitionId
     );
     if (!definition) {
@@ -320,6 +315,7 @@ export class ProjectWorkspace {
       id: this.#idFactory("furniture_definition"),
       name: `${definition.name} copy`
     };
+    candidate.furnitureDefinitions ??= [];
     candidate.furnitureDefinitions.push(copy);
     placement.definitionId = copy.id;
     const diagnostics = validateProjectDocument(candidate);
@@ -329,8 +325,8 @@ export class ProjectWorkspace {
 
   deleteFurniturePlacement(id: string): ProjectWorkspace {
     return this.#replaceActiveLevel((level) => {
-      const count = level.furniturePlacements.length;
-      level.furniturePlacements = level.furniturePlacements.filter(
+      const count = level.furniturePlacements?.length ?? 0;
+      level.furniturePlacements = (level.furniturePlacements ?? []).filter(
         (placement) => placement.id !== id
       );
       if (count === level.furniturePlacements.length) {

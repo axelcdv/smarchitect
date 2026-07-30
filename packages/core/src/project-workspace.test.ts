@@ -144,7 +144,7 @@ describe("Project Workspace acceptance seam", () => {
     expect(imported.diagnostics).toEqual([]);
   });
 
-  it("loads pre-Furniture 1.0 documents with empty compatible collections", () => {
+  it("preserves pre-Furniture 1.0 documents without silently adding collections", () => {
     const legacyYaml = `schemaVersion: 1.0.0
 id: project_00000000-0000-4000-8000-000000000001
 name: Existing project
@@ -162,8 +162,10 @@ extensions: {}
 
     const imported = ProjectWorkspace.importYaml(legacyYaml);
 
-    expect(imported.document.furnitureDefinitions).toEqual([]);
-    expect(imported.activeLevel.furniturePlacements).toEqual([]);
+    expect(imported.document.furnitureDefinitions).toBeUndefined();
+    expect(imported.activeLevel.furniturePlacements).toBeUndefined();
+    expect(imported.exportYaml()).not.toContain("furnitureDefinitions");
+    expect(imported.exportYaml()).not.toContain("furniturePlacements");
   });
 
   it("rejects unsupported schema versions with a machine-readable diagnostic", () => {
@@ -307,6 +309,46 @@ extensions: {}
     });
     expect(furnished.document.furnitureDefinitions).toEqual([definition]);
     expect(imported.document).toEqual(furnished.document);
+  });
+
+  it("reuses the embedded snapshot when the Item Library definition has drifted", () => {
+    const libraryDefinition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Dining table",
+      widthMm: 1800,
+      depthMm: 900,
+      heightMm: 750,
+      extensions: {}
+    };
+    const first = ProjectWorkspace.create("Furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    }).placeFurniture(libraryDefinition, { position: { x: 0, y: 0 } });
+    const otherFirst = ProjectWorkspace.create("Other furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    }).placeFurniture(libraryDefinition, { position: { x: 0, y: 0 } });
+    const editedEmbedded = first.updateFurnitureDefinition(
+      libraryDefinition.id,
+      { widthMm: 1700 }
+    );
+    const changedLibrary = { ...libraryDefinition, widthMm: 2000 };
+
+    const placedAfterEmbeddedEdit = editedEmbedded.placeFurniture(
+      libraryDefinition,
+      { position: { x: 1000, y: 0 } }
+    );
+    const placedAfterLibraryEdit = otherFirst.placeFurniture(
+      changedLibrary,
+      { position: { x: 2000, y: 0 } }
+    );
+
+    expect(placedAfterEmbeddedEdit.document.furnitureDefinitions).toEqual([
+      expect.objectContaining({ id: libraryDefinition.id, widthMm: 1700 })
+    ]);
+    expect(placedAfterLibraryEdit.document.furnitureDefinitions).toEqual([
+      libraryDefinition
+    ]);
+    expect(placedAfterEmbeddedEdit.activeLevel.furniturePlacements).toHaveLength(2);
+    expect(placedAfterLibraryEdit.activeLevel.furniturePlacements).toHaveLength(2);
   });
 
   it("moves, rotates, elevates, and deletes Furniture Placements", () => {

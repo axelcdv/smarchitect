@@ -246,35 +246,14 @@ export function parseProjectDocument(
   const parsedValue: unknown = yamlDocument.toJS({
     maxAliasCount: 0
   });
-  const value = addCompatibleFurnitureCollections(parsedValue);
-  const diagnostics = validateProjectDocument(value);
+  const diagnostics = validateProjectDocument(parsedValue);
 
   if (diagnostics.length) {
     return { diagnostics };
   }
 
   return {
-    document: value as ProjectDocument,
+    document: parsedValue as ProjectDocument,
     diagnostics: []
   };
-}
-
-function addCompatibleFurnitureCollections(value: unknown): unknown {
-  if (
-    typeof value !== "object"
-    || value === null
-    || !("schemaVersion" in value)
-    || value.schemaVersion !== CURRENT_SCHEMA_VERSION
-  ) {
-    return value;
-  }
-  const compatible = structuredClone(value) as {
-    furnitureDefinitions?: unknown[];
-    levels?: Array<{ furniturePlacements?: unknown[] }>;
-  };
-  compatible.furnitureDefinitions ??= [];
-  for (const level of compatible.levels ?? []) {
-    level.furniturePlacements ??= [];
-  }
-  return compatible;
 }
