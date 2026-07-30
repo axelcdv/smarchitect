@@ -15,6 +15,9 @@ import {
   type OpeningUpdate,
   type PointMm,
   type ProjectDocument,
+  type Room,
+  type RoomLabelInput,
+  type RoomLabelUpdate,
   type WallInput,
   type WallUpdate
 } from "./types.js";
@@ -24,6 +27,7 @@ import {
   validateProjectDocument
 } from "./validation.js";
 import { normalizeAngleDeg } from "./wall-geometry.js";
+import { deriveRooms, findRoomContainingPoint } from "./room-geometry.js";
 import { wallPathLength } from "./opening-geometry.js";
 
 const DEFAULT_LEVEL_NAME = "Ground floor";
@@ -56,7 +60,6 @@ function reconcileYamlNode(
       });
       return;
     }
-
     if (
       next.length === previous.length + 1
       && valuesMatch(previous, next.slice(0, -1))
@@ -64,7 +67,6 @@ function reconcileYamlNode(
       yamlDocument.setIn([...path, previous.length], next.at(-1));
       return;
     }
-
     if (previous.length === next.length + 1) {
       const removedIndex = previous.findIndex((_value, index) =>
         valuesMatch(
@@ -77,7 +79,6 @@ function reconcileYamlNode(
         return;
       }
     }
-
     yamlDocument.setIn(path, next);
     return;
   }
@@ -137,7 +138,6 @@ function fitOpeningToWall(opening: Opening, wall: Level["walls"][number]): void 
     opening.heightMm = Math.max(1, Math.min(opening.heightMm, wall.heightMm));
   }
 }
-
 function assertNonEmptyName(name: string, subject: string): string {
   const normalizedName = name.trim();
 
@@ -160,6 +160,7 @@ export function createProjectDocument(
     baseElevationMm: 0,
     defaultWallHeightMm: DEFAULT_WALL_HEIGHT_MM,
     walls: [],
+    roomLabels: [],
     openings: [],
     furniturePlacements: [],
     extensions: {}
@@ -226,7 +227,10 @@ export class ProjectWorkspace {
     }
 
     const document = cloneProjectDocument(result.document);
-    for (const level of document.levels) level.openings ??= [];
+    for (const level of document.levels) {
+      level.roomLabels ??= [];
+      level.openings ??= [];
+    }
     return new ProjectWorkspace(document, defaultIdFactory, source);
   }
 
@@ -247,7 +251,43 @@ export class ProjectWorkspace {
   }
 
   get diagnostics(): Diagnostic[] {
-    return validateProjectDocument(this.#document);
+    const diagnostics = validateProjectDocument(this.#document);
+    const levelIndex = this.#document.levels.findIndex(
+      ({ id }) => id === this.#document.activeLevelId
+    );
+    const level = this.#document.levels[levelIndex];
+    if (!level) return diagnostics;
+    const rooms = deriveRooms(level.walls, level.roomLabels);
+    for (const [labelIndex, label] of level.roomLabels.entries()) {
+      if (!findRoomContainingPoint(label.position, rooms)) {
+        diagnostics.push({
+          code: "room-label.outside-room",
+          severity: "warning",
+          path: `/levels/${levelIndex}/roomLabels/${labelIndex}/position`,
+          message: `Room Label "${label.name}" is outside every enclosed Room. Move it inside a Room or delete it.`
+        });
+      }
+    }
+    for (const room of rooms) {
+      if (room.labelIds.length > 1) {
+        const names = level.roomLabels
+          .filter(({ id }) => room.labelIds.includes(id))
+          .map(({ name }) => `"${name}"`)
+          .join(", ");
+        diagnostics.push({
+          code: "room-label.merge-conflict",
+          severity: "warning",
+          path: `/levels/${levelIndex}/roomLabels`,
+          message: `Merged Room contains multiple labels (${names}). Move or delete labels to choose one explicitly.`
+        });
+      }
+    }
+    return diagnostics;
+  }
+
+  get rooms(): Room[] {
+    const level = this.activeLevel;
+    return deriveRooms(level.walls, level.roomLabels);
   }
 
   #acceptCandidate(candidate: ProjectDocument): ProjectWorkspace {
@@ -377,6 +417,17 @@ export class ProjectWorkspace {
     });
   }
 
+  addRoomLabel(input: RoomLabelInput): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      level.roomLabels.push({
+        id: this.#idFactory("room-label"),
+        name: assertNonEmptyName(input.name, "Room Label"),
+        position: { ...input.position },
+        extensions: {}
+      });
+    });
+  }
+
   addOpening(input: OpeningInput): ProjectWorkspace {
     return this.#replaceActiveLevel((level) => {
       level.openings ??= [];
@@ -385,6 +436,28 @@ export class ProjectWorkspace {
         id: this.#idFactory("opening"),
         extensions: {}
       });
+    });
+  }
+
+  updateRoomLabel(id: string, update: RoomLabelUpdate): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const label = level.roomLabels.find((candidate) => candidate.id === id);
+      if (!label) throw new Error(`Room Label "${id}" does not exist.`);
+      if (update.name !== undefined) {
+        label.name = assertNonEmptyName(update.name, "Room Label");
+      }
+      if (update.position) label.position = { ...update.position };
+    });
+  }
+
+  moveRoomLabel(id: string, delta: PointMm): ProjectWorkspace {
+    const label = this.activeLevel.roomLabels.find((candidate) => candidate.id === id);
+    if (!label) throw new Error(`Room Label "${id}" does not exist.`);
+    return this.updateRoomLabel(id, {
+      position: {
+        x: label.position.x + delta.x,
+        y: label.position.y + delta.y
+      }
     });
   }
 
@@ -410,6 +483,16 @@ export class ProjectWorkspace {
       level.openings = level.openings.filter((opening) => opening.id !== id);
       if (level.openings.length === count) {
         throw new Error(`Opening "${id}" does not exist.`);
+      }
+    });
+  }
+
+  deleteRoomLabel(id: string): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const count = level.roomLabels.length;
+      level.roomLabels = level.roomLabels.filter((label) => label.id !== id);
+      if (level.roomLabels.length === count) {
+        throw new Error(`Room Label "${id}" does not exist.`);
       }
     });
   }

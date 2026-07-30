@@ -332,6 +332,39 @@ h2 {
   pointer-events: none;
 }
 
+.derived-room {
+  pointer-events: none;
+}
+
+.derived-room polygon {
+  fill: rgb(49 95 76 / 10%);
+  stroke: rgb(49 95 76 / 45%);
+  stroke-width: 12;
+}
+
+.derived-room text,
+.room-label text {
+  fill: var(--green);
+  font-family: var(--mono);
+  font-size: 110px;
+  text-anchor: middle;
+}
+
+.room-label {
+  pointer-events: none;
+}
+
+.room-label circle {
+  fill: #fffef9;
+  stroke: var(--green);
+  stroke-width: 20;
+}
+
+.selected-room-label circle {
+  fill: var(--accent);
+  stroke: var(--accent-dark);
+}
+
 .selected-wall {
   fill: var(--accent);
   pointer-events: none;
@@ -396,6 +429,7 @@ h2 {
 }
 
 .wall-properties,
+.room-label-properties,
 .opening-properties,
 .furniture-properties {
   display: grid;
@@ -408,6 +442,7 @@ h2 {
 }
 
 .wall-properties label,
+.room-label-properties label,
 .opening-properties label,
 .furniture-properties label {
   display: grid;
@@ -415,6 +450,7 @@ h2 {
 }
 
 .wall-properties label span,
+.room-label-properties label span,
 .opening-properties label span,
 .furniture-properties label span {
   color: var(--muted);
@@ -422,12 +458,26 @@ h2 {
 }
 
 .wall-properties input,
+.room-label-properties input,
 .opening-properties input,
 .opening-properties select,
 .furniture-properties input {
   min-width: 0;
   border: 1px solid var(--line);
   padding: 7px;
+}
+
+.room-label-properties {
+  grid-template-columns: 2fr 1fr 1fr auto;
+}
+
+.room-diagnostic {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: #fff6e8;
+  color: #7d4a16;
+  font-size: 12px;
 }
 
 .opening-conflict {

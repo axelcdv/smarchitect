@@ -1,6 +1,7 @@
 import {
   deriveWallFaces,
   deriveWallJunctions,
+  findRoomLabelAtPoint,
   distanceAlongWallPath,
   findWallAtPoint,
   findWallEndpointAtPoint,
@@ -16,6 +17,7 @@ import {
   type Opening,
   type OpeningUpdate,
   type PointMm,
+  type RoomLabel,
   type FurnitureDefinitionUpdate,
   type FurniturePlacementUpdate,
   type Wall,
@@ -42,6 +44,7 @@ import "./styles.css";
 type WallEditField =
   | "startX" | "startY" | "endX" | "endY"
   | "lengthMm" | "angleDeg" | "thicknessMm" | "heightMm";
+type RoomLabelEditField = "name" | "x" | "y";
 
 function wallPolygonPoints(wall: Wall): string {
   return deriveWallFaces(wall)
@@ -68,6 +71,7 @@ export function App() {
   const [draftName, setDraftName] = useState("");
   const [operationError, setOperationError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
+  const [selectedRoomLabelId, setSelectedRoomLabelId] = useState<string>();
   const [selectedOpeningId, setSelectedOpeningId] = useState<string>();
   const [openingConflict, setOpeningConflict] = useState<{
     wallId: string;
@@ -77,12 +81,16 @@ export function App() {
   const [selectedFurnitureId, setSelectedFurnitureId] = useState<string>();
   const [placingDefinitionId, setPlacingDefinitionId] = useState<string>();
   const library = useFurnitureLibrary(setOperationError);
-  const [mode, setMode] = useState<"draw" | "select" | "placeFurniture">("draw");
+  const [mode, setMode] = useState<
+    "draw" | "select" | "label" | "placeFurniture"
+  >("draw");
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
     | { kind: "draw"; start: PointMm }
     | { kind: "move"; wallId: string; start: PointMm }
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
+    | { kind: "add-label" }
+    | { kind: "move-label"; labelId: string; start: PointMm }
     | {
         kind: "opening";
         openingId: string;
@@ -107,6 +115,9 @@ export function App() {
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
+  const roomLabels = activeLevel?.roomLabels ?? [];
+  const rooms = workspace?.rooms ?? [];
+  const selectedRoomLabel = roomLabels.find(({ id }) => id === selectedRoomLabelId);
   const openings = activeLevel?.openings ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
   const selectedOpening = openings.find(({ id }) => id === selectedOpeningId);
@@ -137,6 +148,7 @@ export function App() {
     const restored = await autosavedProject.navigateHistory(direction);
     if (restored) {
       setSelectedWallId(undefined);
+      setSelectedRoomLabelId(undefined);
       setSelectedOpeningId(undefined);
       setSelectedFurnitureId(undefined);
       setOperationError("");
@@ -172,6 +184,7 @@ export function App() {
           durable.activeLevel.furniturePlacements?.at(-1)?.id
         );
         setSelectedWallId(undefined);
+        setSelectedRoomLabelId(undefined);
         setSelectedOpeningId(undefined);
         setMode("select");
         setPlacingDefinitionId(undefined);
@@ -180,6 +193,20 @@ export function App() {
     }
     if (mode === "draw") {
       setGesture({ kind: "draw", start: snapPoint(point, walls, snapTolerance) });
+      return;
+    }
+    if (mode === "label") {
+      setGesture({ kind: "add-label" });
+      return;
+    }
+
+    const label = findRoomLabelAtPoint(point, roomLabels, view.width / 80);
+    if (label) {
+      setSelectedRoomLabelId(label.id);
+      setSelectedWallId(undefined);
+      setSelectedOpeningId(undefined);
+      setSelectedFurnitureId(undefined);
+      setGesture({ kind: "move-label", labelId: label.id, start: point });
       return;
     }
 
@@ -194,6 +221,7 @@ export function App() {
     if (furniture) {
       setSelectedFurnitureId(furniture.id);
       setSelectedWallId(undefined);
+      setSelectedRoomLabelId(undefined);
       setSelectedOpeningId(undefined);
       setGesture({
         kind: "furnitureMove",
@@ -217,6 +245,7 @@ export function App() {
 
     const wall = findWallAtPoint(point, walls, view.width / 400);
     setSelectedWallId(wall?.id);
+    setSelectedRoomLabelId(undefined);
     setSelectedOpeningId(undefined);
     setSelectedFurnitureId(undefined);
     if (wall) {
@@ -227,7 +256,20 @@ export function App() {
   async function finishPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
     if (!workspace || !gesture || isTransitionPending()) return;
     const point = eventPoint(event);
-    if (gesture.kind === "draw") {
+    if (gesture.kind === "add-label") {
+      const next = workspace.addRoomLabel({
+        name: `Room ${roomLabels.length + 1}`,
+        position: point
+      });
+      const durable = await commit(next);
+      if (durable) {
+        setSelectedRoomLabelId(durable.activeLevel.roomLabels.at(-1)?.id);
+        setSelectedWallId(undefined);
+        setSelectedOpeningId(undefined);
+        setSelectedFurnitureId(undefined);
+        setMode("select");
+      }
+    } else if (gesture.kind === "draw") {
       const exactSnap = snapPoint(point, walls, view.width / 80);
       const snapped = exactSnap.x !== point.x || exactSnap.y !== point.y
         ? exactSnap
@@ -279,7 +321,7 @@ export function App() {
           positionMm: nextPosition
         }));
       }
-    } else {
+    } else if (gesture.kind === "furnitureMove") {
       const placement = furniturePlacements.find(
         ({ id }) => id === gesture.placementId
       );
@@ -291,6 +333,11 @@ export function App() {
           }
         }));
       }
+    } else {
+      await commit(workspace.moveRoomLabel(gesture.labelId, {
+        x: point.x - gesture.start.x,
+        y: point.y - gesture.start.y
+      }));
     }
     setGesture(undefined);
   }
@@ -383,6 +430,7 @@ export function App() {
       ));
       if (durable) {
         setSelectedOpeningId(durable.activeLevel.openings.at(-1)?.id);
+        setSelectedRoomLabelId(undefined);
         setSelectedFurnitureId(undefined);
         setMode("select");
       }
@@ -391,6 +439,25 @@ export function App() {
         ? cause.diagnostics.map(({ message }) => message).join(" ")
         : cause instanceof Error ? cause.message : "Unable to add Opening.");
     }
+  }
+
+  async function editSelectedRoomLabel(
+    field: RoomLabelEditField,
+    value: string
+  ): Promise<void> {
+    if (!workspace || !selectedRoomLabel || !value) return;
+    if (field === "name") {
+      await commit(workspace.updateRoomLabel(selectedRoomLabel.id, { name: value }));
+      return;
+    }
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    await commit(workspace.updateRoomLabel(selectedRoomLabel.id, {
+      position: {
+        ...selectedRoomLabel.position,
+        [field]: Math.round(numeric)
+      }
+    }));
   }
 
   async function createProject(): Promise<void> {
@@ -606,9 +673,12 @@ export function App() {
           <div className="plan-toolbar">
             <button disabled={isSaving} className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
             <button disabled={isSaving} className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
-            <span className="plan-count">
-              {`${walls.length} ${walls.length === 1 ? "wall" : "walls"}`}
-            </span>
+            <button disabled={isSaving} className={mode === "label" ? "tool-active" : ""} type="button" onClick={() => setMode("label")}>Add room label</button>
+              <span className="plan-count">
+                <span>{`${walls.length} ${walls.length === 1 ? "wall" : "walls"}`}</span>
+                {" · "}
+                <span>{`${rooms.length} ${rooms.length === 1 ? "room" : "rooms"}`}</span>
+              </span>
             <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("door")}>Add door</button>
             <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("window")}>Add window</button>
             <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("passage")}>Add passage</button>
@@ -647,6 +717,17 @@ export function App() {
               </pattern>
             </defs>
             <rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#grid)" />
+            {rooms.map((room) => (
+              <g key={room.id} className="derived-room">
+                <polygon points={room.boundary.map(({ x, y }) => `${x},${-y}`).join(" ")} />
+                <text
+                  x={room.boundary.reduce((sum, { x }) => sum + x, 0) / room.boundary.length}
+                  y={-room.boundary.reduce((sum, { y }) => sum + y, 0) / room.boundary.length}
+                >
+                  {(room.areaMm2 / 1_000_000).toFixed(2)} m² · {room.dimensionsMm.width} × {room.dimensionsMm.depth} mm
+                </text>
+              </g>
+            ))}
             <path
               className="wall-surface"
               d={walls.map((wall) => {
@@ -694,6 +775,7 @@ export function App() {
                     event.stopPropagation();
                     setSelectedOpeningId(opening.id);
                     setSelectedWallId(opening.hostWallId);
+                    setSelectedRoomLabelId(undefined);
                     setSelectedFurnitureId(undefined);
                     setMode("select");
                     setGesture({
@@ -718,6 +800,17 @@ export function App() {
                 r={view.width / 160}
               />
             )) : null}
+            {roomLabels.map((label: RoomLabel) => (
+              <g
+                className={label.id === selectedRoomLabelId ? "room-label selected-room-label" : "room-label"}
+                key={label.id}
+              >
+                <circle cx={label.position.x} cy={-label.position.y} r={view.width / 100} />
+                <text x={label.position.x} y={-label.position.y - view.width / 70}>
+                  {label.name}
+                </text>
+              </g>
+            ))}
           </svg>
           {selectedWall ? (
             <div className="wall-properties" aria-label="Selected wall properties">
@@ -740,6 +833,53 @@ export function App() {
               }}>Delete wall</button>
             </div>
           ) : null}
+          {selectedRoomLabel ? (
+            <div className="room-label-properties" aria-label="Selected Room Label properties">
+              <label>
+                <span>Room Label name</span>
+                <input
+                  disabled={isSaving}
+                  aria-label="Room Label name"
+                  value={selectedRoomLabel.name}
+                  onChange={(event) => void editSelectedRoomLabel("name", event.target.value)}
+                />
+              </label>
+              {([
+                ["x", "Room Label X (mm)", selectedRoomLabel.position.x],
+                ["y", "Room Label Y (mm)", selectedRoomLabel.position.y]
+              ] satisfies [RoomLabelEditField, string, number][]).map(([field, label, value]) => (
+                <label key={field}>
+                  <span>{label}</span>
+                  <input
+                    disabled={isSaving}
+                    aria-label={label}
+                    type="number"
+                    value={value}
+                    onChange={(event) => void editSelectedRoomLabel(field, event.target.value)}
+                  />
+                </label>
+              ))}
+              <button
+                type="button"
+                className="danger-button"
+                disabled={isSaving}
+                onClick={async () => {
+                  if (await commit(workspace.deleteRoomLabel(selectedRoomLabel.id))) {
+                    setSelectedRoomLabelId(undefined);
+                  }
+                }}
+              >
+                Delete room label
+              </button>
+            </div>
+          ) : null}
+          {diagnostics.filter(({ code }) => code.startsWith("room-label.")).map(
+            ({ code, message }, index) => (
+              <p className="room-diagnostic" role="alert" key={`${code}:${index}`}>
+                {message}
+              </p>
+            )
+          )}
           {openingConflict ? (
             <div className="opening-conflict" role="alert" aria-label="Opening conflict resolution">
               <strong>Wall edit conflicts with hosted Openings</strong>

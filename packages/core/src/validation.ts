@@ -115,6 +115,18 @@ function semanticDiagnostics(document: ProjectDocument): Diagnostic[] {
         });
       }
     }
+    const roomLabelIds = new Set<string>();
+    for (const [labelIndex, label] of (level.roomLabels ?? []).entries()) {
+      if (roomLabelIds.has(label.id)) {
+        diagnostics.push({
+          code: "room-label.id.duplicate",
+          severity: "error",
+          path: `/levels/${index}/roomLabels/${labelIndex}/id`,
+          message: `Room Label ID "${label.id}" must be unique within its Level.`
+        });
+      }
+      roomLabelIds.add(label.id);
+    }
 
     for (const [openingIndex, opening] of (level.openings ?? []).entries()) {
       const openingPath = `/levels/${index}/openings/${openingIndex}`;

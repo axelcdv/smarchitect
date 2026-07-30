@@ -85,6 +85,12 @@
             "$ref": "#/$defs/wall"
           }
         },
+        "roomLabels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/roomLabel"
+          }
+        },
         "openings": {
           "type": "array",
           "items": {
@@ -132,6 +138,24 @@
         },
         "thicknessMm": { "type": "integer", "exclusiveMinimum": 0 },
         "heightMm": { "type": "integer", "exclusiveMinimum": 0 },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "roomLabel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "position", "extensions"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^room-label_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "position": { "$ref": "#/$defs/point" },
         "extensions": { "$ref": "#/$defs/extensions" }
       }
     },
