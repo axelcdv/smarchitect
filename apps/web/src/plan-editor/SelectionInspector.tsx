@@ -29,142 +29,150 @@ import {
   type WallEditField
 } from "./WallInspector.js";
 
+export interface WallInspectorModel {
+  wall?: Wall;
+  disabled: boolean;
+  resetKey: string;
+  onEdit(field: WallEditField, value: string): void;
+  onDelete(): void;
+}
+
+export interface RoomLabelInspectorModel {
+  roomLabel?: RoomLabel;
+  diagnostics: readonly Diagnostic[];
+  disabled: boolean;
+  resetKey: string;
+  onEdit(field: RoomLabelEditField, value: string): void;
+  onDelete(): void;
+}
+
+export interface OpeningInspectorModel {
+  opening?: Opening;
+  conflict?: OpeningConflict;
+  openings: readonly Opening[];
+  disabled: boolean;
+  onResolveConflict(resolution: "fit" | "delete"): void;
+  onCancelConflict(): void;
+  onEdit(update: OpeningUpdate): void;
+  onDelete(): void;
+}
+
+interface PlacementInspectorModel<
+  Placement,
+  Definition,
+  PlacementUpdate,
+  DefinitionUpdate
+> {
+  placement?: Placement;
+  definition?: Definition;
+  libraryDefinition?: Definition;
+  disabled: boolean;
+  onUpdatePlacement(update: PlacementUpdate): void;
+  onUpdateDefinition(update: DefinitionUpdate): void;
+  onMakeUnique(): void;
+  onDelete(): void;
+}
+
+export type FurnitureInspectorModel = PlacementInspectorModel<
+  FurniturePlacement,
+  FurnitureDefinition,
+  FurniturePlacementUpdate,
+  FurnitureDefinitionUpdate
+>;
+
+export type FixtureInspectorModel = PlacementInspectorModel<
+  FixturePlacement,
+  FixtureDefinition,
+  FixturePlacementUpdate,
+  FixtureDefinitionUpdate
+>;
+
 export interface SelectionInspectorProps {
   selection: EditorSelection;
-  wall?: Wall;
-  opening?: Opening;
-  roomLabel?: RoomLabel;
-  furniture?: FurniturePlacement;
-  furnitureDefinition?: FurnitureDefinition;
-  furnitureLibraryDefinition?: FurnitureDefinition;
-  fixture?: FixturePlacement;
-  fixtureDefinition?: FixtureDefinition;
-  fixtureLibraryDefinition?: FixtureDefinition;
-  diagnostics: readonly Diagnostic[];
-  openings: readonly Opening[];
-  openingConflict?: OpeningConflict;
-  isSaving: boolean;
-  isLibrarySaving: boolean;
-  resetKey: string;
-  onEditWall(field: WallEditField, value: string): void;
-  onDeleteWall(): void;
-  onEditRoomLabel(field: RoomLabelEditField, value: string): void;
-  onDeleteRoomLabel(): void;
-  onResolveOpeningConflict(resolution: "fit" | "delete"): void;
-  onCancelOpeningConflict(): void;
-  onEditOpening(update: OpeningUpdate): void;
-  onDeleteOpening(): void;
-  onUpdateFurniturePlacement(update: FurniturePlacementUpdate): void;
-  onUpdateFurnitureDefinition(update: FurnitureDefinitionUpdate): void;
-  onMakeFurnitureUnique(): void;
-  onDeleteFurniture(): void;
-  onUpdateFixturePlacement(update: FixturePlacementUpdate): void;
-  onUpdateFixtureDefinition(update: FixtureDefinitionUpdate): void;
-  onMakeFixtureUnique(): void;
-  onDeleteFixture(): void;
+  wall: WallInspectorModel;
+  roomLabel: RoomLabelInspectorModel;
+  opening: OpeningInspectorModel;
+  furniture: FurnitureInspectorModel;
+  fixture: FixtureInspectorModel;
 }
 
 export function SelectionInspector({
   selection,
   wall,
-  opening,
   roomLabel,
+  opening,
   furniture,
-  furnitureDefinition,
-  furnitureLibraryDefinition,
   fixture,
-  fixtureDefinition,
-  fixtureLibraryDefinition,
-  diagnostics,
-  openings,
-  openingConflict,
-  isSaving,
-  isLibrarySaving,
-  resetKey,
-  onEditWall,
-  onDeleteWall,
-  onEditRoomLabel,
-  onDeleteRoomLabel,
-  onResolveOpeningConflict,
-  onCancelOpeningConflict,
-  onEditOpening,
-  onDeleteOpening,
-  onUpdateFurniturePlacement,
-  onUpdateFurnitureDefinition,
-  onMakeFurnitureUnique,
-  onDeleteFurniture,
-  onUpdateFixturePlacement,
-  onUpdateFixtureDefinition,
-  onMakeFixtureUnique,
-  onDeleteFixture
 }: SelectionInspectorProps) {
   const selectedWall = selection.kind === "wall"
     || selection.kind === "opening"
-    ? wall
+    ? wall.wall
     : undefined;
   const selectedRoomLabel = selection.kind === "roomLabel"
-    ? roomLabel
+    ? roomLabel.roomLabel
     : undefined;
 
   return (
     <>
       {selectedWall ? (
         <WallInspector
-          disabled={isSaving}
-          resetKey={resetKey}
+          disabled={wall.disabled}
+          resetKey={wall.resetKey}
           wall={selectedWall}
-          onDelete={onDeleteWall}
-          onEdit={onEditWall}
+          onDelete={wall.onDelete}
+          onEdit={wall.onEdit}
         />
       ) : null}
       <RoomLabelInspector
-        diagnostics={diagnostics}
-        disabled={isSaving}
-        resetKey={resetKey}
+        diagnostics={roomLabel.diagnostics}
+        disabled={roomLabel.disabled}
+        resetKey={roomLabel.resetKey}
         roomLabel={selectedRoomLabel}
-        onDelete={onDeleteRoomLabel}
-        onEdit={onEditRoomLabel}
+        onDelete={roomLabel.onDelete}
+        onEdit={roomLabel.onEdit}
       />
       <OpeningConflictPanel
-        conflict={openingConflict}
-        disabled={isSaving}
-        openings={openings}
-        onCancel={onCancelOpeningConflict}
-        onResolve={onResolveOpeningConflict}
+        conflict={opening.conflict}
+        disabled={opening.disabled}
+        openings={opening.openings}
+        onCancel={opening.onCancelConflict}
+        onResolve={opening.onResolveConflict}
       />
-      {selection.kind === "opening" && opening ? (
+      {selection.kind === "opening" && opening.opening ? (
         <OpeningProperties
-          opening={opening}
-          isSaving={isSaving}
-          onEdit={onEditOpening}
-          onDelete={onDeleteOpening}
+          opening={opening.opening}
+          isSaving={opening.disabled}
+          onEdit={opening.onEdit}
+          onDelete={opening.onDelete}
         />
       ) : null}
       {selection.kind === "furniture"
-        && furniture
-        && furnitureDefinition ? (
+        && furniture.placement
+        && furniture.definition ? (
           <PlacementInspector
-            definition={furnitureDefinition}
-            disabled={isSaving || isLibrarySaving}
-            libraryDefinition={furnitureLibraryDefinition}
-            placement={furniture}
-            onUpdatePlacement={onUpdateFurniturePlacement}
-            onUpdateDefinition={onUpdateFurnitureDefinition}
-            onMakeUnique={onMakeFurnitureUnique}
-            onDelete={onDeleteFurniture}
+            definition={furniture.definition}
+            disabled={furniture.disabled}
+            libraryDefinition={furniture.libraryDefinition}
+            placement={furniture.placement}
+            onUpdatePlacement={furniture.onUpdatePlacement}
+            onUpdateDefinition={furniture.onUpdateDefinition}
+            onMakeUnique={furniture.onMakeUnique}
+            onDelete={furniture.onDelete}
           />
         ) : null}
-      {selection.kind === "fixture" && fixture && fixtureDefinition ? (
+      {selection.kind === "fixture"
+        && fixture.placement
+        && fixture.definition ? (
         <PlacementInspector
           kind="Fixture"
-          definition={fixtureDefinition}
-          disabled={isSaving || isLibrarySaving}
-          libraryDefinition={fixtureLibraryDefinition}
-          placement={fixture}
-          onUpdatePlacement={onUpdateFixturePlacement}
-          onUpdateDefinition={onUpdateFixtureDefinition}
-          onMakeUnique={onMakeFixtureUnique}
-          onDelete={onDeleteFixture}
+          definition={fixture.definition}
+          disabled={fixture.disabled}
+          libraryDefinition={fixture.libraryDefinition}
+          placement={fixture.placement}
+          onUpdatePlacement={fixture.onUpdatePlacement}
+          onUpdateDefinition={fixture.onUpdateDefinition}
+          onMakeUnique={fixture.onMakeUnique}
+          onDelete={fixture.onDelete}
         />
       ) : null}
     </>

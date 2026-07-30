@@ -129,28 +129,42 @@ describe("selected-entity inspectors", () => {
   it("routes the explicit selection through one inspector boundary", () => {
     const props = {
       selection: { kind: "wall", wallId: wall.id },
-      wall,
-      diagnostics: [],
-      openings: [],
-      isSaving: false,
-      isLibrarySaving: false,
-      resetKey: "",
-      onEditWall: vi.fn(),
-      onDeleteWall: vi.fn(),
-      onEditRoomLabel: vi.fn(),
-      onDeleteRoomLabel: vi.fn(),
-      onResolveOpeningConflict: vi.fn(),
-      onCancelOpeningConflict: vi.fn(),
-      onEditOpening: vi.fn(),
-      onDeleteOpening: vi.fn(),
-      onUpdateFurniturePlacement: vi.fn(),
-      onUpdateFurnitureDefinition: vi.fn(),
-      onMakeFurnitureUnique: vi.fn(),
-      onDeleteFurniture: vi.fn(),
-      onUpdateFixturePlacement: vi.fn(),
-      onUpdateFixtureDefinition: vi.fn(),
-      onMakeFixtureUnique: vi.fn(),
-      onDeleteFixture: vi.fn()
+      wall: {
+        wall,
+        disabled: false,
+        resetKey: "",
+        onEdit: vi.fn(),
+        onDelete: vi.fn()
+      },
+      roomLabel: {
+        diagnostics: [],
+        disabled: false,
+        resetKey: "",
+        onEdit: vi.fn(),
+        onDelete: vi.fn()
+      },
+      opening: {
+        openings: [],
+        disabled: false,
+        onResolveConflict: vi.fn(),
+        onCancelConflict: vi.fn(),
+        onEdit: vi.fn(),
+        onDelete: vi.fn()
+      },
+      furniture: {
+        disabled: false,
+        onUpdatePlacement: vi.fn(),
+        onUpdateDefinition: vi.fn(),
+        onMakeUnique: vi.fn(),
+        onDelete: vi.fn()
+      },
+      fixture: {
+        disabled: false,
+        onUpdatePlacement: vi.fn(),
+        onUpdateDefinition: vi.fn(),
+        onMakeUnique: vi.fn(),
+        onDelete: vi.fn()
+      }
     } satisfies SelectionInspectorProps;
 
     const { rerender } = render(<SelectionInspector {...props} />);
@@ -161,8 +175,8 @@ describe("selected-entity inspectors", () => {
       <SelectionInspector
         {...props}
         selection={{ kind: "roomLabel", roomLabelId: roomLabel.id }}
-        roomLabel={roomLabel}
-        wall={undefined}
+        roomLabel={{ ...props.roomLabel, roomLabel }}
+        wall={{ ...props.wall, wall: undefined }}
       />
     );
     expect(screen.queryByLabelText("Selected wall properties"))

@@ -872,87 +872,101 @@ export function App() {
           </svg>
           <SelectionInspector
             selection={selection}
-            wall={selectedWall}
-            opening={selectedOpening}
-            roomLabel={selectedRoomLabel}
-            furniture={selectedFurniture}
-            furnitureDefinition={selectedFurnitureDefinition}
-            furnitureLibraryDefinition={selectedLibraryDefinition}
-            fixture={selectedFixture}
-            fixtureDefinition={selectedFixtureDefinition}
-            fixtureLibraryDefinition={selectedFixtureLibraryDefinition}
-            diagnostics={diagnostics}
-            openings={openings}
-            openingConflict={openingConflict}
-            isSaving={isSaving}
-            isLibrarySaving={library.isSaving}
-            resetKey={operationError}
-            onEditWall={(field, value) => void editSelected(field, value)}
-            onDeleteWall={() => {
-              if (!selectedWall) return;
-              void commit(workspace.deleteWall(selectedWall.id))
-                .then((durable) => {
+            wall={{
+              wall: selectedWall,
+              disabled: isSaving,
+              resetKey: operationError,
+              onEdit: (field, value) => void editSelected(field, value),
+              onDelete: () => {
+                if (!selectedWall) return;
+                void commit(workspace.deleteWall(selectedWall.id))
+                  .then((durable) => {
+                    if (durable) clearSelection();
+                  });
+              }
+            }}
+            roomLabel={{
+              roomLabel: selectedRoomLabel,
+              diagnostics,
+              disabled: isSaving,
+              resetKey: operationError,
+              onEdit: (field, value) =>
+                void editSelectedRoomLabel(field, value),
+              onDelete: () => {
+                if (!selectedRoomLabel) return;
+                void commit(workspace.deleteRoomLabel(selectedRoomLabel.id))
+                  .then((durable) => {
+                    if (durable) clearSelection();
+                  });
+              }
+            }}
+            opening={{
+              opening: selectedOpening,
+              conflict: openingConflict,
+              openings,
+              disabled: isSaving,
+              onResolveConflict: (resolution) =>
+                void resolveOpeningConflict(resolution),
+              onCancelConflict: () => {
+                setOpeningConflict(undefined);
+                setOperationError("");
+              },
+              onEdit: (update) => void editOpening(update),
+              onDelete: () => {
+                if (!selectedOpening) return;
+                void commit(workspace.deleteOpening(selectedOpening.id))
+                  .then((durable) => {
+                    if (durable) selectWall(selectedOpening.hostWallId);
+                  });
+              }
+            }}
+            furniture={{
+              placement: selectedFurniture,
+              definition: selectedFurnitureDefinition,
+              libraryDefinition: selectedLibraryDefinition,
+              disabled: isSaving || library.isSaving,
+              onUpdatePlacement: (update) =>
+                void editFurniturePlacement(update),
+              onUpdateDefinition: (update) =>
+                void editEmbeddedDefinition(update),
+              onMakeUnique: () => {
+                if (!selectedFurniture) return;
+                void commit(
+                  workspace.makeFurniturePlacementUnique(selectedFurniture.id)
+                );
+              },
+              onDelete: () => {
+                if (!selectedFurniture) return;
+                void commit(
+                  workspace.deleteFurniturePlacement(selectedFurniture.id)
+                ).then((durable) => {
                   if (durable) clearSelection();
                 });
+              }
             }}
-            onEditRoomLabel={(field, value) =>
-              void editSelectedRoomLabel(field, value)}
-            onDeleteRoomLabel={() => {
-              if (!selectedRoomLabel) return;
-              void commit(workspace.deleteRoomLabel(selectedRoomLabel.id))
-                .then((durable) => {
+            fixture={{
+              placement: selectedFixture,
+              definition: selectedFixtureDefinition,
+              libraryDefinition: selectedFixtureLibraryDefinition,
+              disabled: isSaving || library.isSaving,
+              onUpdatePlacement: (update) =>
+                void editFixturePlacement(update),
+              onUpdateDefinition: (update) =>
+                void editEmbeddedFixtureDefinition(update),
+              onMakeUnique: () => {
+                if (!selectedFixture) return;
+                void commit(
+                  workspace.makeFixturePlacementUnique(selectedFixture.id)
+                );
+              },
+              onDelete: () => {
+                if (!selectedFixture) return;
+                void commit(
+                  workspace.deleteFixturePlacement(selectedFixture.id)
+                ).then((durable) => {
                   if (durable) clearSelection();
                 });
-            }}
-            onResolveOpeningConflict={(resolution) =>
-              void resolveOpeningConflict(resolution)}
-            onCancelOpeningConflict={() => {
-              setOpeningConflict(undefined);
-              setOperationError("");
-            }}
-            onEditOpening={(update) => void editOpening(update)}
-            onDeleteOpening={() => {
-              if (!selectedOpening) return;
-              void commit(workspace.deleteOpening(selectedOpening.id))
-                .then((durable) => {
-                  if (durable) selectWall(selectedOpening.hostWallId);
-                });
-            }}
-            onUpdateFurniturePlacement={(update) =>
-              void editFurniturePlacement(update)}
-            onUpdateFurnitureDefinition={(update) =>
-              void editEmbeddedDefinition(update)}
-            onMakeFurnitureUnique={() => {
-              if (!selectedFurniture) return;
-              void commit(
-                workspace.makeFurniturePlacementUnique(selectedFurniture.id)
-              );
-            }}
-            onDeleteFurniture={() => {
-              if (!selectedFurniture) return;
-              void commit(
-                workspace.deleteFurniturePlacement(selectedFurniture.id)
-              ).then((durable) => {
-                if (durable) clearSelection();
-              });
-            }}
-            onUpdateFixturePlacement={(update) =>
-              void editFixturePlacement(update)}
-            onUpdateFixtureDefinition={(update) =>
-              void editEmbeddedFixtureDefinition(update)}
-            onMakeFixtureUnique={() => {
-              if (!selectedFixture) return;
-              void commit(
-                workspace.makeFixturePlacementUnique(selectedFixture.id)
-              );
-            }}
-            onDeleteFixture={() => {
-              if (!selectedFixture) return;
-              void commit(
-                workspace.deleteFixturePlacement(selectedFixture.id)
-              ).then((durable) => {
-                if (durable) clearSelection();
-              });
+              }
             }}
           />
         </section>
