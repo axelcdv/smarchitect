@@ -211,9 +211,7 @@ export class ProjectWorkspace {
     return validateProjectDocument(this.#document);
   }
 
-  rename(name: string): ProjectWorkspace {
-    const candidate = cloneProjectDocument(this.#document);
-    candidate.name = assertNonEmptyName(name, "Project");
+  #acceptCandidate(candidate: ProjectDocument): ProjectWorkspace {
     const diagnostics = validateProjectDocument(candidate);
 
     if (diagnostics.length) {
@@ -227,6 +225,12 @@ export class ProjectWorkspace {
     );
   }
 
+  rename(name: string): ProjectWorkspace {
+    const candidate = cloneProjectDocument(this.#document);
+    candidate.name = assertNonEmptyName(name, "Project");
+    return this.#acceptCandidate(candidate);
+  }
+
   #replaceActiveLevel(update: (level: Level) => void): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
     const level = candidate.levels.find(({ id }) => id === candidate.activeLevelId);
@@ -236,15 +240,7 @@ export class ProjectWorkspace {
     }
 
     update(level);
-    const diagnostics = validateProjectDocument(candidate);
-    if (diagnostics.length) {
-      throw new ProjectValidationError(diagnostics);
-    }
-    return new ProjectWorkspace(
-      candidate,
-      this.#idFactory,
-      updateYamlSource(this.#source, this.#document, candidate)
-    );
+    return this.#acceptCandidate(candidate);
   }
 
   addWall(input: WallInput): ProjectWorkspace {
