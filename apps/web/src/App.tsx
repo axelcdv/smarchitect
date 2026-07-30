@@ -2,31 +2,43 @@ import {
   deriveWallFaces,
   deriveWallJunctions,
   findRoomLabelAtPoint,
+  distanceAlongWallPath,
   findWallAtPoint,
   findWallEndpointAtPoint,
+  furnitureFootprintCorners,
+  furniturePlacementContainsPoint,
   ProjectValidationError,
   ProjectWorkspace,
   snapAngle,
   snapPoint,
   snapWallDelta,
   wallAngleDeg,
+  wallPathLength,
+  type Opening,
+  type OpeningUpdate,
   type PointMm,
   type RoomLabel,
-  type Wall
+  type FurnitureDefinitionUpdate,
+  type FurniturePlacementUpdate,
+  type Wall,
+  type WallUpdate
 } from "@smarchitect/core";
 import {
-  useEffect,
   useRef,
   useState,
   type ChangeEvent,
   type PointerEvent,
   type WheelEvent
 } from "react";
+import { useAutosavedProject } from "./use-autosaved-project.js";
+import { FurniturePlacementInspector } from "./FurniturePlacementInspector.js";
+import { ItemLibrary } from "./ItemLibrary.js";
+import { useFurnitureLibrary } from "./use-furniture-library.js";
 import {
-  AutosavedProject,
-  IndexedDbProjectRepository,
-  SerializedProjectRepository
-} from "./project-persistence.js";
+  createDefaultOpeningInput,
+  OpeningProperties,
+  OpeningSymbol
+} from "./OpeningEditor.js";
 import "./styles.css";
 
 type WallEditField =
@@ -57,17 +69,21 @@ function downloadYaml(source: string, projectName: string): void {
 
 export function App() {
   const [draftName, setDraftName] = useState("");
-  const [workspace, setWorkspace] = useState<ProjectWorkspace>();
-  const [historyControls, setHistoryControls] = useState({
-    canUndo: false,
-    canRedo: false
-  });
-  const [isSaving, setIsSaving] = useState(false);
-  const [yaml, setYaml] = useState("");
-  const [error, setError] = useState("");
+  const [operationError, setOperationError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
   const [selectedRoomLabelId, setSelectedRoomLabelId] = useState<string>();
-  const [mode, setMode] = useState<"draw" | "select" | "label">("draw");
+  const [selectedOpeningId, setSelectedOpeningId] = useState<string>();
+  const [openingConflict, setOpeningConflict] = useState<{
+    wallId: string;
+    update: WallUpdate;
+    openingIds: string[];
+  }>();
+  const [selectedFurnitureId, setSelectedFurnitureId] = useState<string>();
+  const [placingDefinitionId, setPlacingDefinitionId] = useState<string>();
+  const library = useFurnitureLibrary(setOperationError);
+  const [mode, setMode] = useState<
+    "draw" | "select" | "label" | "placeFurniture"
+  >("draw");
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
     | { kind: "draw"; start: PointMm }
@@ -75,105 +91,67 @@ export function App() {
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
     | { kind: "add-label" }
     | { kind: "move-label"; labelId: string; start: PointMm }
+    | {
+        kind: "opening";
+        openingId: string;
+        start: PointMm;
+        startPositionMm: number;
+      }
+    | { kind: "furnitureMove"; placementId: string; start: PointMm }
   >();
   const importInput = useRef<HTMLInputElement>(null);
-  const repository = useRef(
-    new SerializedProjectRepository(new IndexedDbProjectRepository())
-  );
-  const autosavedProject = useRef<AutosavedProject | undefined>(undefined);
-  const transitionPending = useRef(false);
+  const autosavedProject = useAutosavedProject();
+  const {
+    workspace,
+    yaml,
+    persistenceError,
+    isSaving,
+    canUndo,
+    canRedo,
+    isTransitionPending
+  } = autosavedProject;
+  const error = persistenceError || operationError;
   const document = workspace?.document;
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
   const roomLabels = activeLevel?.roomLabels ?? [];
   const rooms = workspace?.rooms ?? [];
-  const selectedWall = walls.find(({ id }) => id === selectedWallId);
   const selectedRoomLabel = roomLabels.find(({ id }) => id === selectedRoomLabelId);
-
-  function refreshHistoryControls(project: AutosavedProject): void {
-    setHistoryControls({
-      canUndo: project.canUndo,
-      canRedo: project.canRedo
-    });
-  }
-
-  useEffect(() => {
-    let active = true;
-    void AutosavedProject.restore(repository.current)
-      .then((restored) => {
-        if (!active || !restored || autosavedProject.current) return;
-        autosavedProject.current = restored;
-        setWorkspace(restored.workspace);
-        setYaml(restored.workspace.exportYaml());
-        setDraftName(restored.workspace.document.name);
-        refreshHistoryControls(restored);
-      })
-      .catch(() => {
-        if (active && !autosavedProject.current) {
-          setError("Local recovery is unavailable. New edits may not survive reload.");
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  function show(next: ProjectWorkspace): void {
-    setWorkspace(next);
-    setYaml(next.exportYaml());
-    setError("");
-  }
-
-  async function persist(
-    transition: () => Promise<ProjectWorkspace>
-  ): Promise<ProjectWorkspace | undefined> {
-    if (transitionPending.current) return undefined;
-    transitionPending.current = true;
-    setIsSaving(true);
-    try {
-      const durable = await transition();
-      show(durable);
-      return durable;
-    } catch (cause) {
-      setError(cause instanceof Error
-        ? `Autosave failed: ${cause.message}`
-        : "Autosave failed. The edit was not accepted.");
-      return undefined;
-    } finally {
-      transitionPending.current = false;
-      setIsSaving(false);
-    }
-  }
+  const openings = activeLevel?.openings ?? [];
+  const selectedWall = walls.find(({ id }) => id === selectedWallId);
+  const selectedOpening = openings.find(({ id }) => id === selectedOpeningId);
+  const furniturePlacements = activeLevel?.furniturePlacements ?? [];
+  const selectedFurniture = furniturePlacements.find(
+    ({ id }) => id === selectedFurnitureId
+  );
+  const selectedFurnitureDefinition = document?.furnitureDefinitions?.find(
+    ({ id }) => id === selectedFurniture?.definitionId
+  );
+  const selectedLibraryDefinition = library.definitions.find(
+    ({ id }) => id === selectedFurnitureDefinition?.id
+  );
 
   async function commit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined> {
-    const project = autosavedProject.current;
-    if (!project) return undefined;
-    const durable = await persist(() => project.accept(next));
-    if (durable) refreshHistoryControls(project);
+    const durable = await autosavedProject.commit(next);
+    if (durable) setOperationError("");
     return durable;
   }
 
   async function startAutosave(next: ProjectWorkspace): Promise<boolean> {
-    const durable = await persist(async () => {
-      const project = await AutosavedProject.create(next, repository.current);
-      autosavedProject.current = project;
-      refreshHistoryControls(project);
-      return project.workspace;
-    });
-    return durable !== undefined;
+    const started = await autosavedProject.startAutosave(next);
+    if (started) setOperationError("");
+    return started;
   }
 
   async function navigateHistory(direction: "undo" | "redo"): Promise<void> {
-    const project = autosavedProject.current;
-    if (!project) return;
-    const restored = await persist(
-      () => direction === "undo" ? project.undo() : project.redo()
-    );
+    const restored = await autosavedProject.navigateHistory(direction);
     if (restored) {
       setSelectedWallId(undefined);
       setSelectedRoomLabelId(undefined);
-      refreshHistoryControls(project);
+      setSelectedOpeningId(undefined);
+      setSelectedFurnitureId(undefined);
+      setOperationError("");
     }
   }
 
@@ -189,10 +167,30 @@ export function App() {
     return clientPoint(event.currentTarget, event.clientX, event.clientY);
   }
 
-  function beginPlanGesture(event: PointerEvent<SVGSVGElement>): void {
-    if (transitionPending.current) return;
+  async function beginPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
+    if (isTransitionPending()) return;
     const point = eventPoint(event);
     const snapTolerance = view.width / 80;
+    if (mode === "placeFurniture") {
+      const definition = library.definitions.find(
+        ({ id }) => id === placingDefinitionId
+      );
+      if (!workspace || !definition) return;
+      const durable = await commit(workspace.placeFurniture(definition, {
+        position: point
+      }));
+      if (durable) {
+        setSelectedFurnitureId(
+          durable.activeLevel.furniturePlacements?.at(-1)?.id
+        );
+        setSelectedWallId(undefined);
+        setSelectedRoomLabelId(undefined);
+        setSelectedOpeningId(undefined);
+        setMode("select");
+        setPlacingDefinitionId(undefined);
+      }
+      return;
+    }
     if (mode === "draw") {
       setGesture({ kind: "draw", start: snapPoint(point, walls, snapTolerance) });
       return;
@@ -206,7 +204,30 @@ export function App() {
     if (label) {
       setSelectedRoomLabelId(label.id);
       setSelectedWallId(undefined);
+      setSelectedOpeningId(undefined);
+      setSelectedFurnitureId(undefined);
       setGesture({ kind: "move-label", labelId: label.id, start: point });
+      return;
+    }
+
+    const furniture = [...furniturePlacements].reverse().find((placement) => {
+      const definition = document?.furnitureDefinitions?.find(
+        ({ id }) => id === placement.definitionId
+      );
+      return definition
+        ? furniturePlacementContainsPoint(definition, placement, point)
+        : false;
+    });
+    if (furniture) {
+      setSelectedFurnitureId(furniture.id);
+      setSelectedWallId(undefined);
+      setSelectedRoomLabelId(undefined);
+      setSelectedOpeningId(undefined);
+      setGesture({
+        kind: "furnitureMove",
+        placementId: furniture.id,
+        start: point
+      });
       return;
     }
 
@@ -225,13 +246,15 @@ export function App() {
     const wall = findWallAtPoint(point, walls, view.width / 400);
     setSelectedWallId(wall?.id);
     setSelectedRoomLabelId(undefined);
+    setSelectedOpeningId(undefined);
+    setSelectedFurnitureId(undefined);
     if (wall) {
       setGesture({ kind: "move", wallId: wall.id, start: point });
     }
   }
 
   async function finishPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
-    if (!workspace || !gesture || transitionPending.current) return;
+    if (!workspace || !gesture || isTransitionPending()) return;
     const point = eventPoint(event);
     if (gesture.kind === "add-label") {
       const next = workspace.addRoomLabel({
@@ -242,6 +265,8 @@ export function App() {
       if (durable) {
         setSelectedRoomLabelId(durable.activeLevel.roomLabels.at(-1)?.id);
         setSelectedWallId(undefined);
+        setSelectedOpeningId(undefined);
+        setSelectedFurnitureId(undefined);
         setMode("select");
       }
     } else if (gesture.kind === "draw") {
@@ -273,8 +298,39 @@ export function App() {
         const candidates = walls.filter(({ id }) => id !== wall.id);
         const snapped = snapPoint(point, candidates, view.width / 80);
         const hasExactSnap = snapped.x !== point.x || snapped.y !== point.y;
-        await commit(workspace.updateWall(wall.id, {
+        await attemptWallUpdate(wall.id, {
           [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
+        });
+      }
+    } else if (gesture.kind === "opening") {
+      const opening = openings.find(({ id }) => id === gesture.openingId);
+      const wall = opening
+        ? walls.find(({ id }) => id === opening.hostWallId)
+        : undefined;
+      if (opening && wall) {
+        const pointerDelta = distanceAlongWallPath(wall, point)
+          - distanceAlongWallPath(wall, gesture.start);
+        const nextPosition = Math.max(
+          0,
+          Math.min(
+            wallPathLength(wall) - opening.widthMm,
+            Math.round(gesture.startPositionMm + pointerDelta)
+          )
+        );
+        await commit(workspace.updateOpening(opening.id, {
+          positionMm: nextPosition
+        }));
+      }
+    } else if (gesture.kind === "furnitureMove") {
+      const placement = furniturePlacements.find(
+        ({ id }) => id === gesture.placementId
+      );
+      if (placement) {
+        await commit(workspace.updateFurniturePlacement(placement.id, {
+          position: {
+            x: placement.position.x + point.x - gesture.start.x,
+            y: placement.position.y + point.y - gesture.start.y
+          }
         }));
       }
     } else {
@@ -286,6 +342,23 @@ export function App() {
     setGesture(undefined);
   }
 
+  async function editFurniturePlacement(
+    update: FurniturePlacementUpdate
+  ): Promise<void> {
+    if (!workspace || !selectedFurniture) return;
+    await commit(workspace.updateFurniturePlacement(selectedFurniture.id, update));
+  }
+
+  async function editEmbeddedDefinition(
+    update: FurnitureDefinitionUpdate
+  ): Promise<void> {
+    if (!workspace || !selectedFurnitureDefinition) return;
+    await commit(workspace.updateFurnitureDefinition(
+      selectedFurnitureDefinition.id,
+      update
+    ));
+  }
+
   async function editSelected(field: WallEditField, value: string): Promise<void> {
     if (!workspace || !selectedWall || !value) return;
     const numeric = Number(value);
@@ -295,7 +368,77 @@ export function App() {
       : field === "endX" ? { end: { ...selectedWall.path.end, x: Math.round(numeric) } }
       : field === "endY" ? { end: { ...selectedWall.path.end, y: Math.round(numeric) } }
       : { [field]: field === "angleDeg" ? numeric : Math.round(numeric) };
-    await commit(workspace.updateWall(selectedWall.id, update));
+    await attemptWallUpdate(selectedWall.id, update);
+  }
+
+  async function attemptWallUpdate(wallId: string, update: WallUpdate): Promise<void> {
+    if (!workspace) return;
+    try {
+      const durable = await commit(workspace.updateWall(wallId, update));
+      if (durable) setOpeningConflict(undefined);
+    } catch (cause) {
+      if (cause instanceof ProjectValidationError) {
+        const openingIds = cause.diagnostics.flatMap(({ path }) => {
+          const match = /^\/levels\/\d+\/openings\/(\d+)\//.exec(path);
+          const opening = match ? openings[Number(match[1])] : undefined;
+          return opening ? [opening.id] : [];
+        });
+        if (openingIds.length) {
+          setOpeningConflict({
+            wallId,
+            update,
+            openingIds: [...new Set(openingIds)]
+          });
+          setOperationError(
+            "Wall edit conflicts with hosted Openings. Choose an explicit resolution."
+          );
+          return;
+        }
+      }
+      setOperationError(cause instanceof Error ? cause.message : "Unable to edit Wall.");
+    }
+  }
+
+  async function resolveOpeningConflict(
+    resolution: "fit" | "delete"
+  ): Promise<void> {
+    if (!workspace || !openingConflict) return;
+    const durable = await commit(workspace.updateWallResolvingOpenings(
+      openingConflict.wallId,
+      openingConflict.update,
+      resolution
+    ));
+    if (durable) setOpeningConflict(undefined);
+  }
+
+  async function editOpening(update: OpeningUpdate): Promise<void> {
+    if (!workspace || !selectedOpening) return;
+    try {
+      await commit(workspace.updateOpening(selectedOpening.id, update));
+    } catch (cause) {
+      setOperationError(cause instanceof ProjectValidationError
+        ? cause.diagnostics.map(({ message }) => message).join(" ")
+        : cause instanceof Error ? cause.message : "Unable to edit Opening.");
+    }
+  }
+
+  async function addOpening(kind: Opening["kind"]): Promise<void> {
+    if (!workspace || !selectedWall) return;
+    try {
+      const durable = await commit(workspace.addOpening(
+        createDefaultOpeningInput(kind, selectedWall)
+      ));
+      if (durable) {
+        setSelectedOpeningId(durable.activeLevel.openings.at(-1)?.id);
+        setSelectedRoomLabelId(undefined);
+        setSelectedFurnitureId(undefined);
+        setMode("select");
+      }
+    } catch (cause) {
+      setOperationError(cause instanceof ProjectValidationError
+        ? cause.diagnostics.map(({ message }) => message).join(" ")
+        : cause instanceof Error ? cause.message : "Unable to add Opening.");
+    }
   }
 
   async function editSelectedRoomLabel(
@@ -322,7 +465,9 @@ export function App() {
       const created = ProjectWorkspace.create(draftName);
       await startAutosave(created);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to create project.");
+      setOperationError(cause instanceof Error
+        ? cause.message
+        : "Unable to create project.");
     }
   }
 
@@ -335,7 +480,9 @@ export function App() {
       const renamedWorkspace = workspace.rename(event.target.value);
       await commit(renamedWorkspace);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Unable to rename project.");
+      setOperationError(cause instanceof Error
+        ? cause.message
+        : "Unable to rename project.");
     }
   }
 
@@ -353,9 +500,11 @@ export function App() {
       }
     } catch (cause) {
       if (cause instanceof ProjectValidationError) {
-        setError(cause.diagnostics.map(({ message }) => message).join(" "));
+        setOperationError(cause.diagnostics.map(({ message }) => message).join(" "));
       } else {
-        setError(cause instanceof Error ? cause.message : "Unable to import project.");
+        setOperationError(cause instanceof Error
+          ? cause.message
+          : "Unable to import project.");
       }
     } finally {
       event.target.value = "";
@@ -429,7 +578,7 @@ export function App() {
           <button
             type="button"
             className="secondary-button"
-            disabled={isSaving || !historyControls.canUndo}
+            disabled={isSaving || !canUndo}
             onClick={() => void navigateHistory("undo")}
           >
             Undo
@@ -437,7 +586,7 @@ export function App() {
           <button
             type="button"
             className="secondary-button"
-            disabled={isSaving || !historyControls.canRedo}
+            disabled={isSaving || !canRedo}
             onClick={() => void navigateHistory("redo")}
           >
             Redo
@@ -482,6 +631,14 @@ export function App() {
               </small>
             </div>
           </div>
+          <ItemLibrary
+            controller={library}
+            disabled={isSaving}
+            onPlace={(id) => {
+              setPlacingDefinitionId(id);
+              setMode("placeFurniture");
+            }}
+          />
           <dl className="project-facts">
             <div>
               <dt>Units</dt>
@@ -517,10 +674,17 @@ export function App() {
             <button disabled={isSaving} className={mode === "draw" ? "tool-active" : ""} type="button" onClick={() => setMode("draw")}>Draw wall</button>
             <button disabled={isSaving} className={mode === "select" ? "tool-active" : ""} type="button" onClick={() => setMode("select")}>Select</button>
             <button disabled={isSaving} className={mode === "label" ? "tool-active" : ""} type="button" onClick={() => setMode("label")}>Add room label</button>
+              <span className="plan-count">
+                <span>{`${walls.length} ${walls.length === 1 ? "wall" : "walls"}`}</span>
+                {" · "}
+                <span>{`${rooms.length} ${rooms.length === 1 ? "room" : "rooms"}`}</span>
+              </span>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("door")}>Add door</button>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("window")}>Add window</button>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("passage")}>Add passage</button>
+            <span>{openings.length} {openings.length === 1 ? "opening" : "openings"}</span>
             <span>
-              <span>{walls.length} {walls.length === 1 ? "wall" : "walls"}</span>
-              {" · "}
-              <span>{rooms.length} {rooms.length === 1 ? "room" : "rooms"}</span>
+              {`${furniturePlacements.length} Furniture ${furniturePlacements.length === 1 ? "Placement" : "Placements"}`}
             </span>
             <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
             <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
@@ -534,8 +698,8 @@ export function App() {
             viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
             role="application"
             aria-label={`${activeLevel.name} wall editor`}
-            onPointerDown={beginPlanGesture}
-            onPointerUp={finishPlanGesture}
+            onPointerDown={(event) => void beginPlanGesture(event)}
+            onPointerUp={(event) => void finishPlanGesture(event)}
             onWheel={(event: WheelEvent<SVGSVGElement>) => {
               event.preventDefault();
               const factor = event.deltaY > 0 ? 1.1 : .9;
@@ -573,12 +737,57 @@ export function App() {
                   : "";
               }).join(" ")}
             />
+            {furniturePlacements.map((placement) => {
+              const definition = document.furnitureDefinitions?.find(
+                ({ id }) => id === placement.definitionId
+              );
+              if (!definition) return null;
+              return (
+                <polygon
+                  key={placement.id}
+                  className={placement.id === selectedFurnitureId
+                    ? "furniture-footprint selected-furniture"
+                    : "furniture-footprint"}
+                  points={furnitureFootprintCorners(definition, placement)
+                    .map(({ x, y }) => `${x},${-y}`)
+                    .join(" ")}
+                />
+              );
+            })}
             {selectedWall ? (
               <polygon
                 className="selected-wall"
                 points={wallPolygonPoints(selectedWall)}
               />
             ) : null}
+            {openings.map((opening) => {
+              const host = walls.find(({ id }) => id === opening.hostWallId);
+              return host ? (
+                <OpeningSymbol
+                  key={opening.id}
+                  opening={opening}
+                  wall={host}
+                  selected={opening.id === selectedOpeningId}
+                  onPointerDown={(event) => {
+                    if (isTransitionPending()) return;
+                    const svg = event.currentTarget.ownerSVGElement;
+                    if (!svg) return;
+                    event.stopPropagation();
+                    setSelectedOpeningId(opening.id);
+                    setSelectedWallId(opening.hostWallId);
+                    setSelectedRoomLabelId(undefined);
+                    setSelectedFurnitureId(undefined);
+                    setMode("select");
+                    setGesture({
+                      kind: "opening",
+                      openingId: opening.id,
+                      start: clientPoint(svg, event.clientX, event.clientY),
+                      startPositionMm: opening.positionMm
+                    });
+                  }}
+                />
+              ) : null;
+            })}
             {deriveWallJunctions(walls).map(({ point }) => (
               <circle className="junction" key={`${point.x}:${point.y}`} cx={point.x} cy={-point.y} r={view.width / 220} />
             ))}
@@ -671,6 +880,56 @@ export function App() {
               </p>
             )
           )}
+          {openingConflict ? (
+            <div className="opening-conflict" role="alert" aria-label="Opening conflict resolution">
+              <strong>Wall edit conflicts with hosted Openings</strong>
+              <p>
+                Affected: {openings
+                  .filter(({ id }) => openingConflict.openingIds.includes(id))
+                  .map(({ kind, id }) => `${kind} ${id}`)
+                  .join(", ")}
+              </p>
+              <button type="button" disabled={isSaving} onClick={() => void resolveOpeningConflict("fit")}>Fit openings and apply</button>
+              <button type="button" className="danger-button" disabled={isSaving} onClick={() => void resolveOpeningConflict("delete")}>Delete conflicting openings and apply</button>
+              <button type="button" disabled={isSaving} onClick={() => {
+                setOpeningConflict(undefined);
+                setOperationError("");
+              }}>Cancel wall edit</button>
+            </div>
+          ) : null}
+          {selectedOpening ? (
+            <OpeningProperties
+              opening={selectedOpening}
+              isSaving={isSaving}
+              onEdit={(update) => void editOpening(update)}
+              onDelete={() => {
+                void commit(workspace.deleteOpening(selectedOpening.id))
+                  .then((durable) => {
+                    if (durable) setSelectedOpeningId(undefined);
+                  });
+              }}
+            />
+          ) : null}
+          {selectedFurniture && selectedFurnitureDefinition ? (
+            <FurniturePlacementInspector
+              definition={selectedFurnitureDefinition}
+              disabled={isSaving}
+              libraryDefinition={selectedLibraryDefinition}
+              placement={selectedFurniture}
+              onUpdatePlacement={(update) => void editFurniturePlacement(update)}
+              onUpdateDefinition={(update) => void editEmbeddedDefinition(update)}
+              onMakeUnique={() => void commit(
+                workspace.makeFurniturePlacementUnique(selectedFurniture.id)
+              )}
+              onDelete={async () => {
+                if (await commit(
+                  workspace.deleteFurniturePlacement(selectedFurniture.id)
+                )) {
+                  setSelectedFurnitureId(undefined);
+                }
+              }}
+            />
+          ) : null}
         </section>
 
         <section className="yaml-panel" aria-labelledby="yaml-title">

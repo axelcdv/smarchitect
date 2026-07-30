@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CURRENT_SCHEMA_VERSION,
+  ProjectValidationError,
   ProjectWorkspace,
   createProjectDocument,
   parseProjectDocument,
@@ -14,11 +15,45 @@ function deterministicIdFactory(): IdFactory {
     project: 1,
     level: 2,
     wall: 3,
-    "room-label": 8
+    "room-label": 8,
+    opening: 5,
+    furniture_definition: 5,
+    furniture_placement: 6
   };
   return (kind) => {
     const value = next[kind]++;
     return `${kind}_00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
+  };
+}
+
+function deterministicFurnitureIdFactory(): () => string {
+  const ids = [
+    "project_00000000-0000-4000-8000-000000000001",
+    "level_00000000-0000-4000-8000-000000000002",
+    "furniture_placement_00000000-0000-4000-8000-000000000006",
+    "furniture_placement_00000000-0000-4000-8000-000000000008",
+    "furniture_definition_00000000-0000-4000-8000-000000000007"
+  ];
+  return () => {
+    const id = ids.shift();
+    if (!id) throw new Error("The test exhausted its deterministic Furniture IDs");
+    return id;
+  };
+}
+
+function deterministicOpeningIdFactory(): () => string {
+  const ids = [
+    "project_00000000-0000-4000-8000-000000000001",
+    "level_00000000-0000-4000-8000-000000000002",
+    "wall_00000000-0000-4000-8000-000000000003",
+    "opening_00000000-0000-4000-8000-000000000005",
+    "opening_00000000-0000-4000-8000-000000000006",
+    "opening_00000000-0000-4000-8000-000000000007"
+  ];
+  return () => {
+    const id = ids.shift();
+    if (!id) throw new Error("The test exhausted its deterministic Opening IDs");
+    return id;
   };
 }
 
@@ -34,6 +69,7 @@ describe("Project Workspace acceptance seam", () => {
       name: "My renovation",
       units: "metric",
       activeLevelId: "level_00000000-0000-4000-8000-000000000002",
+      furnitureDefinitions: [],
       levels: [
         {
           id: "level_00000000-0000-4000-8000-000000000002",
@@ -42,6 +78,8 @@ describe("Project Workspace acceptance seam", () => {
           defaultWallHeightMm: 2500,
           walls: [],
           roomLabels: [],
+          openings: [],
+          furniturePlacements: [],
           extensions: {}
         }
       ],
@@ -103,6 +141,180 @@ describe("Project Workspace acceptance seam", () => {
       x: 1800,
       y: 2400
     });
+  });
+
+  it("adds, edits, moves, and deletes each Opening type on an ordered Wall path", () => {
+    const workspace = ProjectWorkspace.create("Openings", {
+      idFactory: deterministicOpeningIdFactory()
+    }).addWall({
+      start: { x: 3000, y: 1000 },
+      end: { x: 0, y: 1000 },
+      heightMm: 3000
+    });
+    const wallId = workspace.activeLevel.walls[0]!.id;
+    const withDoor = workspace.addOpening({
+      kind: "door",
+      hostWallId: wallId,
+      positionMm: 300,
+      widthMm: 900,
+      heightMm: 2100,
+      operation: {
+        kind: "hinged",
+        hingeSide: "start",
+        swingDirection: "inward"
+      }
+    });
+    const doorId = withDoor.activeLevel.openings[0]!.id;
+    const editedDoor = withDoor.updateOpening(doorId, {
+      operation: { kind: "sliding", slideDirection: "end" },
+      widthMm: 1000
+    });
+    const movedDoor = editedDoor.moveOpening(doorId, 250);
+    const withWindow = movedDoor.addOpening({
+      kind: "window",
+      hostWallId: wallId,
+      positionMm: 1600,
+      widthMm: 800,
+      heightMm: 1200,
+      sillHeightMm: 900,
+      operation: { kind: "fixed" }
+    });
+    const withPassage = withWindow.addOpening({
+      kind: "passage",
+      hostWallId: wallId,
+      positionMm: 2500,
+      widthMm: 500,
+      heightMm: 2200
+    });
+
+    expect(withPassage.activeLevel.openings).toMatchObject([
+      {
+        id: "opening_00000000-0000-4000-8000-000000000005",
+        kind: "door",
+        positionMm: 550,
+        widthMm: 1000,
+        operation: { kind: "sliding", slideDirection: "end" }
+      },
+      {
+        kind: "window",
+        positionMm: 1600,
+        sillHeightMm: 900,
+        operation: { kind: "fixed" }
+      },
+      {
+        kind: "passage",
+        positionMm: 2500,
+        heightMm: 2200
+      }
+    ]);
+    expect(withPassage.deleteOpening(doorId).activeLevel.openings).toHaveLength(2);
+  });
+
+  it("preserves authored YAML through every Opening mutation", () => {
+    const source = `# project comment
+name: Authored openings # name comment
+schemaVersion: 1.0.0
+units: metric
+id: project_00000000-0000-4000-8000-000000000001
+levels:
+  - name: Ground floor # level comment
+    id: level_00000000-0000-4000-8000-000000000002
+    openings:
+      - kind: passage # opening comment
+        id: opening_00000000-0000-4000-8000-000000000005
+        extensions:
+          example.test:opening:
+            authored: true # extension comment
+        hostWallId: wall_00000000-0000-4000-8000-000000000003
+        widthMm: 800
+        positionMm: 200
+        heightMm: 2100
+    walls:
+      - thicknessMm: 150
+        id: wall_00000000-0000-4000-8000-000000000003
+        path:
+          end: { y: 0, x: 4000 }
+          kind: straight
+          start: { y: 0, x: 0 }
+        heightMm: 2500
+        extensions: {}
+    extensions: {}
+    defaultWallHeightMm: 2500
+    baseElevationMm: 0
+activeLevelId: level_00000000-0000-4000-8000-000000000002
+extensions: {}
+`;
+    const imported = ProjectWorkspace.importYaml(source);
+    const firstId = imported.activeLevel.openings[0]!.id;
+    const added = imported.addOpening({
+      kind: "passage",
+      hostWallId: imported.activeLevel.walls[0]!.id,
+      positionMm: 1500,
+      widthMm: 700,
+      heightMm: 2000
+    });
+    const addedId = added.activeLevel.openings[1]!.id;
+    const updated = added.updateOpening(firstId, { widthMm: 900 });
+    const moved = updated.moveOpening(firstId, 100);
+    const deleted = moved.deleteOpening(addedId);
+    const yaml = deleted.exportYaml();
+
+    for (const comment of [
+      "# project comment",
+      "# name comment",
+      "# level comment",
+      "# opening comment",
+      "# extension comment"
+    ]) {
+      expect(yaml).toContain(comment);
+    }
+    expect(yaml.indexOf("name: Authored openings")).toBeLessThan(
+      yaml.indexOf("schemaVersion:")
+    );
+    expect(yaml.indexOf("widthMm: 900")).toBeLessThan(
+      yaml.indexOf("positionMm: 300")
+    );
+    expect(yaml).not.toContain(`id: ${addedId}`);
+    expect(ProjectWorkspace.importYaml(yaml).document).toEqual(deleted.document);
+  });
+
+  it("resolves invalidating Wall edits atomically for hosted Openings", () => {
+    const workspace = ProjectWorkspace.create("Atomic openings", {
+      idFactory: deterministicOpeningIdFactory()
+    }).addWall({
+      start: { x: 0, y: 0 },
+      end: { x: 3000, y: 0 },
+      heightMm: 2500
+    });
+    const wallId = workspace.activeLevel.walls[0]!.id;
+    const withWindow = workspace.addOpening({
+      kind: "window",
+      hostWallId: wallId,
+      positionMm: 1200,
+      widthMm: 1000,
+      heightMm: 1000,
+      sillHeightMm: 1000,
+      operation: { kind: "hinged", hingeSide: "end", swingDirection: "outward" }
+    });
+
+    expect(() => withWindow.updateWall(wallId, { lengthMm: 1800 }))
+      .toThrow(ProjectValidationError);
+    const fitted = withWindow.updateWallResolvingOpenings(
+      wallId,
+      { lengthMm: 1800, heightMm: 1500 },
+      "fit"
+    );
+    expect(fitted.activeLevel.openings[0]).toMatchObject({
+      positionMm: 800,
+      widthMm: 1000,
+      sillHeightMm: 1000,
+      heightMm: 500
+    });
+    expect(withWindow.updateWallResolvingOpenings(
+      wallId,
+      { lengthMm: 1800 },
+      "delete"
+    ).activeLevel.openings).toEqual([]);
   });
 
   it("renames, exports, and imports through one workspace boundary", () => {
@@ -259,6 +471,30 @@ extensions:
     expect(outside.document.levels[0]!.roomLabels).toHaveLength(2);
   });
 
+  it("preserves pre-Furniture 1.0 documents without silently adding collections", () => {
+    const legacyYaml = `schemaVersion: 1.0.0
+id: project_00000000-0000-4000-8000-000000000001
+name: Existing project
+units: metric
+activeLevelId: level_00000000-0000-4000-8000-000000000002
+levels:
+  - id: level_00000000-0000-4000-8000-000000000002
+    name: Ground floor
+    baseElevationMm: 0
+    defaultWallHeightMm: 2500
+    walls: []
+    extensions: {}
+extensions: {}
+`;
+
+    const imported = ProjectWorkspace.importYaml(legacyYaml);
+
+    expect(imported.document.furnitureDefinitions).toBeUndefined();
+    expect(imported.activeLevel.furniturePlacements).toBeUndefined();
+    expect(imported.exportYaml()).not.toContain("furnitureDefinitions");
+    expect(imported.exportYaml()).not.toContain("furniturePlacements");
+  });
+
   it("rejects unsupported schema versions with a machine-readable diagnostic", () => {
     const yaml = `schemaVersion: 99.0.0
 id: project_00000000-0000-4000-8000-000000000001
@@ -370,5 +606,163 @@ extensions: {}
         })
       ])
     );
+  });
+
+  it("embeds a Furniture Definition when placing it and preserves placement geometry", () => {
+    const workspace = ProjectWorkspace.create("Furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    });
+    const definition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Dining table",
+      widthMm: 1800,
+      depthMm: 900,
+      heightMm: 750,
+      extensions: {}
+    };
+
+    const furnished = workspace.placeFurniture(definition, {
+      position: { x: 1200, y: -400 },
+      rotationDeg: 33.5
+    });
+    const placement = furnished.activeLevel.furniturePlacements[0]!;
+    const imported = ProjectWorkspace.importYaml(furnished.exportYaml());
+
+    expect(placement).toMatchObject({
+      definitionId: definition.id,
+      position: { x: 1200, y: -400 },
+      rotationDeg: 33.5,
+      elevationMm: 0
+    });
+    expect(furnished.document.furnitureDefinitions).toEqual([definition]);
+    expect(imported.document).toEqual(furnished.document);
+  });
+
+  it("reuses the embedded snapshot when the Item Library definition has drifted", () => {
+    const libraryDefinition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Dining table",
+      widthMm: 1800,
+      depthMm: 900,
+      heightMm: 750,
+      extensions: {}
+    };
+    const first = ProjectWorkspace.create("Furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    }).placeFurniture(libraryDefinition, { position: { x: 0, y: 0 } });
+    const otherFirst = ProjectWorkspace.create("Other furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    }).placeFurniture(libraryDefinition, { position: { x: 0, y: 0 } });
+    const editedEmbedded = first.updateFurnitureDefinition(
+      libraryDefinition.id,
+      { widthMm: 1700 }
+    );
+    const changedLibrary = { ...libraryDefinition, widthMm: 2000 };
+
+    const placedAfterEmbeddedEdit = editedEmbedded.placeFurniture(
+      libraryDefinition,
+      { position: { x: 1000, y: 0 } }
+    );
+    const placedAfterLibraryEdit = otherFirst.placeFurniture(
+      changedLibrary,
+      { position: { x: 2000, y: 0 } }
+    );
+
+    expect(placedAfterEmbeddedEdit.document.furnitureDefinitions).toEqual([
+      expect.objectContaining({ id: libraryDefinition.id, widthMm: 1700 })
+    ]);
+    expect(placedAfterLibraryEdit.document.furnitureDefinitions).toEqual([
+      libraryDefinition
+    ]);
+    expect(placedAfterEmbeddedEdit.activeLevel.furniturePlacements).toHaveLength(2);
+    expect(placedAfterLibraryEdit.activeLevel.furniturePlacements).toHaveLength(2);
+  });
+
+  it("moves, rotates, elevates, and deletes Furniture Placements", () => {
+    const definition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Armchair",
+      widthMm: 850,
+      depthMm: 900,
+      heightMm: 950,
+      extensions: {}
+    };
+    const workspace = ProjectWorkspace.create("Furnished home", {
+      idFactory: deterministicFurnitureIdFactory()
+    }).placeFurniture(definition, { position: { x: 100, y: 200 } });
+    const placementId = workspace.activeLevel.furniturePlacements[0]!.id;
+
+    const edited = workspace.updateFurniturePlacement(placementId, {
+      position: { x: 800, y: 900 },
+      rotationDeg: -90,
+      elevationMm: 250
+    });
+
+    expect(edited.activeLevel.furniturePlacements[0]).toMatchObject({
+      position: { x: 800, y: 900 },
+      rotationDeg: 270,
+      elevationMm: 250
+    });
+    expect(edited.deleteFurniturePlacement(placementId)
+      .activeLevel.furniturePlacements).toEqual([]);
+  });
+
+  it("updates shared embedded definitions and can make one placement unique", () => {
+    const definition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Chair",
+      widthMm: 450,
+      depthMm: 500,
+      heightMm: 900,
+      extensions: {}
+    };
+    const idFactory = deterministicFurnitureIdFactory();
+    const first = ProjectWorkspace.create("Dining room", { idFactory })
+      .placeFurniture(definition, { position: { x: 0, y: 0 } });
+    const two = first.placeFurniture(definition, { position: { x: 1000, y: 0 } });
+    const [firstPlacement, secondPlacement] = two.activeLevel.furniturePlacements;
+    const shared = two.updateFurnitureDefinition(definition.id, { widthMm: 500 });
+    const unique = shared.makeFurniturePlacementUnique(firstPlacement!.id);
+    const uniqueDefinitionId = unique.activeLevel.furniturePlacements[0]!.definitionId;
+    const edited = unique.updateFurnitureDefinition(uniqueDefinitionId, {
+      name: "Wide chair",
+      widthMm: 650
+    });
+
+    expect(shared.document.furnitureDefinitions[0]!.widthMm).toBe(500);
+    expect(uniqueDefinitionId).not.toBe(definition.id);
+    expect(unique.activeLevel.furniturePlacements[1]!.definitionId)
+      .toBe(secondPlacement!.definitionId);
+    expect(edited.document.furnitureDefinitions.find(({ id }) => id === uniqueDefinitionId))
+      .toMatchObject({ name: "Wide chair", widthMm: 650 });
+    expect(edited.document.furnitureDefinitions.find(({ id }) => id === definition.id))
+      .toMatchObject({ name: "Chair", widthMm: 500 });
+  });
+
+  it("rejects non-positive dimensions and arbitrary placement dimension overrides", () => {
+    const workspace = ProjectWorkspace.create("Invalid furniture", {
+      idFactory: deterministicFurnitureIdFactory()
+    });
+    const invalidDefinition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000005",
+      name: "Broken chair",
+      widthMm: 0,
+      depthMm: 500,
+      heightMm: 900,
+      extensions: {}
+    };
+
+    expect(() => workspace.placeFurniture(invalidDefinition, {
+      position: { x: 0, y: 0 }
+    })).toThrow(ProjectValidationError);
+
+    const validDefinition = { ...invalidDefinition, widthMm: 450 };
+    const furnished = workspace.placeFurniture(validDefinition, {
+      position: { x: 0, y: 0 }
+    });
+    const placementId = furnished.activeLevel.furniturePlacements[0]!.id;
+    expect(() => furnished.updateFurniturePlacement(placementId, {
+      widthMm: 123
+    } as never)).toThrow(/dimension overrides/i);
   });
 });
