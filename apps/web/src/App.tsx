@@ -46,6 +46,7 @@ import { ProjectDocumentPanel } from "./project/ProjectDocumentPanel.js";
 import { ProjectSidebar } from "./project/ProjectSidebar.js";
 import { WelcomeScreen } from "./project/WelcomeScreen.js";
 import { WorkspaceHeader } from "./project/WorkspaceHeader.js";
+import { useEditorSelection } from "./plan-editor/use-editor-selection.js";
 import "./styles.css";
 
 type WallEditField =
@@ -82,16 +83,11 @@ export function App() {
   const [draftName, setDraftName] = useState("");
   const [proposalName, setProposalName] = useState("");
   const [operationError, setOperationError] = useState("");
-  const [selectedWallId, setSelectedWallId] = useState<string>();
-  const [selectedRoomLabelId, setSelectedRoomLabelId] = useState<string>();
-  const [selectedOpeningId, setSelectedOpeningId] = useState<string>();
   const [openingConflict, setOpeningConflict] = useState<{
     wallId: string;
     update: WallUpdate;
     openingIds: string[];
   }>();
-  const [selectedFurnitureId, setSelectedFurnitureId] = useState<string>();
-  const [selectedFixtureId, setSelectedFixtureId] = useState<string>();
   const [placingItem, setPlacingItem] = useState<{
     kind: "furniture" | "fixture";
     definitionId: string;
@@ -147,26 +143,36 @@ export function App() {
     : workspace;
   const displayedWalls = previewWorkspace?.activeLevel.walls ?? walls;
   const rooms = previewWorkspace?.rooms ?? workspace?.rooms ?? [];
-  const selectedRoomLabel = roomLabels.find(({ id }) => id === selectedRoomLabelId);
   const openings = activeLevel?.openings ?? [];
-  const selectedWall = walls.find(({ id }) => id === selectedWallId);
-  const displayedSelectedWall = displayedWalls.find(
-    ({ id }) => id === selectedWallId
-  );
-  const selectedOpening = openings.find(({ id }) => id === selectedOpeningId);
   const furniturePlacements = activeLevel?.furniturePlacements ?? [];
   const fixturePlacements = activeLevel?.fixturePlacements ?? [];
-  const selectedFurniture = furniturePlacements.find(
-    ({ id }) => id === selectedFurnitureId
+  const {
+    wall: selectedWall,
+    opening: selectedOpening,
+    roomLabel: selectedRoomLabel,
+    furniture: selectedFurniture,
+    fixture: selectedFixture,
+    clearSelection,
+    selectWall,
+    selectOpening,
+    selectRoomLabel,
+    selectFurniture,
+    selectFixture
+  } = useEditorSelection({
+    walls,
+    openings,
+    roomLabels,
+    furniturePlacements,
+    fixturePlacements
+  });
+  const displayedSelectedWall = displayedWalls.find(
+    ({ id }) => id === selectedWall?.id
   );
   const selectedFurnitureDefinition = activePlan?.furnitureDefinitions?.find(
     ({ id }) => id === selectedFurniture?.definitionId
   );
   const selectedLibraryDefinition = library.furnitureDefinitions.find(
     ({ id }) => id === selectedFurnitureDefinition?.id
-  );
-  const selectedFixture = fixturePlacements.find(
-    ({ id }) => id === selectedFixtureId
   );
   const selectedFixtureDefinition = activePlan?.fixtureDefinitions?.find(
     ({ id }) => id === selectedFixture?.definitionId
@@ -196,11 +202,7 @@ export function App() {
   }
 
   function clearPlanSelection(): void {
-    setSelectedWallId(undefined);
-    setSelectedRoomLabelId(undefined);
-    setSelectedOpeningId(undefined);
-    setSelectedFurnitureId(undefined);
-    setSelectedFixtureId(undefined);
+    clearSelection();
     setOpeningConflict(undefined);
     setPlacingItem(undefined);
     setMode("select");
@@ -240,19 +242,14 @@ export function App() {
       const durable = await commit(next);
       if (durable) {
         if (placingItem.kind === "furniture") {
-          setSelectedFurnitureId(
-            durable.activeLevel.furniturePlacements?.at(-1)?.id
-          );
-          setSelectedFixtureId(undefined);
+          const placementId =
+            durable.activeLevel.furniturePlacements?.at(-1)?.id;
+          if (placementId) selectFurniture(placementId);
         } else {
-          setSelectedFixtureId(
-            durable.activeLevel.fixturePlacements?.at(-1)?.id
-          );
-          setSelectedFurnitureId(undefined);
+          const placementId =
+            durable.activeLevel.fixturePlacements?.at(-1)?.id;
+          if (placementId) selectFixture(placementId);
         }
-        setSelectedWallId(undefined);
-        setSelectedRoomLabelId(undefined);
-        setSelectedOpeningId(undefined);
         setMode("select");
         setPlacingItem(undefined);
       }
@@ -269,11 +266,7 @@ export function App() {
 
     const label = findRoomLabelAtPoint(point, roomLabels, view.width / 80);
     if (label) {
-      setSelectedRoomLabelId(label.id);
-      setSelectedWallId(undefined);
-      setSelectedOpeningId(undefined);
-      setSelectedFurnitureId(undefined);
-      setSelectedFixtureId(undefined);
+      selectRoomLabel(label.id);
       setGesture({ kind: "move-label", labelId: label.id, start: point });
       return;
     }
@@ -287,11 +280,7 @@ export function App() {
         : false;
     });
     if (fixture) {
-      setSelectedFixtureId(fixture.id);
-      setSelectedFurnitureId(undefined);
-      setSelectedWallId(undefined);
-      setSelectedRoomLabelId(undefined);
-      setSelectedOpeningId(undefined);
+      selectFixture(fixture.id);
       setGesture({
         kind: "fixtureMove",
         placementId: fixture.id,
@@ -309,11 +298,7 @@ export function App() {
         : false;
     });
     if (furniture) {
-      setSelectedFurnitureId(furniture.id);
-      setSelectedFixtureId(undefined);
-      setSelectedWallId(undefined);
-      setSelectedRoomLabelId(undefined);
-      setSelectedOpeningId(undefined);
+      selectFurniture(furniture.id);
       setGesture({
         kind: "furnitureMove",
         placementId: furniture.id,
@@ -335,11 +320,7 @@ export function App() {
     }
 
     const wall = findWallAtPoint(point, walls, view.width / 400);
-    setSelectedWallId(wall?.id);
-    setSelectedRoomLabelId(undefined);
-    setSelectedOpeningId(undefined);
-    setSelectedFurnitureId(undefined);
-    setSelectedFixtureId(undefined);
+    selectWall(wall?.id);
     if (wall) {
       setGesture({ kind: "move", wallId: wall.id, start: point });
     }
@@ -355,11 +336,8 @@ export function App() {
       });
       const durable = await commit(next);
       if (durable) {
-        setSelectedRoomLabelId(durable.activeLevel.roomLabels.at(-1)?.id);
-        setSelectedWallId(undefined);
-        setSelectedOpeningId(undefined);
-        setSelectedFurnitureId(undefined);
-        setSelectedFixtureId(undefined);
+        const roomLabelId = durable.activeLevel.roomLabels.at(-1)?.id;
+        if (roomLabelId) selectRoomLabel(roomLabelId);
         setMode("select");
       }
     } else if (gesture.kind === "draw") {
@@ -371,7 +349,8 @@ export function App() {
         const next = workspace.addWall({ start: gesture.start, end: snapped });
         const durable = await commit(next);
         if (durable) {
-          setSelectedWallId(durable.activeLevel.walls.at(-1)?.id);
+          const wallId = durable.activeLevel.walls.at(-1)?.id;
+          if (wallId) selectWall(wallId);
           setMode("select");
         }
       }
@@ -574,10 +553,8 @@ export function App() {
         createDefaultOpeningInput(kind, selectedWall)
       ));
       if (durable) {
-        setSelectedOpeningId(durable.activeLevel.openings.at(-1)?.id);
-        setSelectedRoomLabelId(undefined);
-        setSelectedFurnitureId(undefined);
-        setSelectedFixtureId(undefined);
+        const opening = durable.activeLevel.openings.at(-1);
+        if (opening) selectOpening(opening.id, opening.hostWallId);
         setMode("select");
       }
     } catch (cause) {
@@ -816,7 +793,7 @@ export function App() {
               return (
                 <polygon
                   key={placement.id}
-                  className={placement.id === selectedFurnitureId
+                  className={placement.id === selectedFurniture?.id
                     ? "furniture-footprint selected-furniture"
                     : "furniture-footprint"}
                   points={furnitureFootprintCorners(definition, placement)
@@ -833,7 +810,7 @@ export function App() {
               return (
                 <polygon
                   key={placement.id}
-                  className={placement.id === selectedFixtureId
+                  className={placement.id === selectedFixture?.id
                     ? "fixture-footprint selected-fixture"
                     : "fixture-footprint"}
                   points={furnitureFootprintCorners(definition, placement)
@@ -855,17 +832,13 @@ export function App() {
                   key={opening.id}
                   opening={opening}
                   wall={host}
-                  selected={opening.id === selectedOpeningId}
+                  selected={opening.id === selectedOpening?.id}
                   onPointerDown={(event) => {
                     if (isTransitionPending()) return;
                     const svg = event.currentTarget.ownerSVGElement;
                     if (!svg) return;
                     event.stopPropagation();
-                    setSelectedOpeningId(opening.id);
-                    setSelectedWallId(opening.hostWallId);
-                    setSelectedRoomLabelId(undefined);
-                    setSelectedFurnitureId(undefined);
-                    setSelectedFixtureId(undefined);
+                    selectOpening(opening.id, opening.hostWallId);
                     setMode("select");
                     setGesture({
                       kind: "opening",
@@ -891,7 +864,7 @@ export function App() {
             )) : null}
             {roomLabels.map((label: RoomLabel) => (
               <g
-                className={label.id === selectedRoomLabelId ? "room-label selected-room-label" : "room-label"}
+                className={label.id === selectedRoomLabel?.id ? "room-label selected-room-label" : "room-label"}
                 key={label.id}
               >
                 <circle cx={label.position.x} cy={-label.position.y} r={view.width / 100} />
@@ -928,7 +901,7 @@ export function App() {
               ))}
               <button type="button" className="danger-button" disabled={isSaving} onClick={async () => {
                 if (await commit(workspace.deleteWall(selectedWall.id))) {
-                  setSelectedWallId(undefined);
+                  clearSelection();
                 }
               }}>Delete wall</button>
             </div>
@@ -967,7 +940,7 @@ export function App() {
                 disabled={isSaving}
                 onClick={async () => {
                   if (await commit(workspace.deleteRoomLabel(selectedRoomLabel.id))) {
-                    setSelectedRoomLabelId(undefined);
+                    clearSelection();
                   }
                 }}
               >
@@ -1007,7 +980,7 @@ export function App() {
               onDelete={() => {
                 void commit(workspace.deleteOpening(selectedOpening.id))
                   .then((durable) => {
-                    if (durable) setSelectedOpeningId(undefined);
+                    if (durable) selectWall(selectedOpening.hostWallId);
                   });
               }}
             />
@@ -1027,7 +1000,7 @@ export function App() {
                 if (await commit(
                   workspace.deleteFurniturePlacement(selectedFurniture.id)
                 )) {
-                  setSelectedFurnitureId(undefined);
+                  clearSelection();
                 }
               }}
             />
@@ -1049,7 +1022,7 @@ export function App() {
                 if (await commit(
                   workspace.deleteFixturePlacement(selectedFixture.id)
                 )) {
-                  setSelectedFixtureId(undefined);
+                  clearSelection();
                 }
               }}
             />
