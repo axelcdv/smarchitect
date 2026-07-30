@@ -9,6 +9,10 @@ import {
   type FurniturePlacementUpdate,
   type IdFactory,
   type Level,
+  type Opening,
+  type OpeningConflictResolution,
+  type OpeningInput,
+  type OpeningUpdate,
   type PointMm,
   type ProjectDocument,
   type WallInput,
@@ -20,6 +24,7 @@ import {
   validateProjectDocument
 } from "./validation.js";
 import { normalizeAngleDeg } from "./wall-geometry.js";
+import { wallPathLength } from "./opening-geometry.js";
 
 const DEFAULT_LEVEL_NAME = "Ground floor";
 const DEFAULT_WALL_HEIGHT_MM = 2500;
@@ -104,6 +109,35 @@ function updateYamlSource(
   return yamlDocument.toString({ lineWidth: 0 });
 }
 
+function openingFitsWall(opening: Opening, wall: Level["walls"][number]): boolean {
+  const bottom = opening.kind === "window" ? opening.sillHeightMm : 0;
+  return opening.positionMm + opening.widthMm <= wallPathLength(wall)
+    && bottom + opening.heightMm <= wall.heightMm;
+}
+
+function fitOpeningToWall(opening: Opening, wall: Level["walls"][number]): void {
+  opening.widthMm = Math.max(
+    1,
+    Math.min(opening.widthMm, Math.floor(wallPathLength(wall)))
+  );
+  opening.positionMm = Math.max(
+    0,
+    Math.min(
+      opening.positionMm,
+      Math.floor(wallPathLength(wall) - opening.widthMm)
+    )
+  );
+  if (opening.kind === "window") {
+    opening.sillHeightMm = Math.min(opening.sillHeightMm, wall.heightMm - 1);
+    opening.heightMm = Math.max(
+      1,
+      Math.min(opening.heightMm, wall.heightMm - opening.sillHeightMm)
+    );
+  } else {
+    opening.heightMm = Math.max(1, Math.min(opening.heightMm, wall.heightMm));
+  }
+}
+
 function assertNonEmptyName(name: string, subject: string): string {
   const normalizedName = name.trim();
 
@@ -126,6 +160,7 @@ export function createProjectDocument(
     baseElevationMm: 0,
     defaultWallHeightMm: DEFAULT_WALL_HEIGHT_MM,
     walls: [],
+    openings: [],
     furniturePlacements: [],
     extensions: {}
   };
@@ -190,7 +225,9 @@ export class ProjectWorkspace {
       throw new ProjectValidationError(result.diagnostics);
     }
 
-    return new ProjectWorkspace(result.document, defaultIdFactory, source);
+    const document = cloneProjectDocument(result.document);
+    for (const level of document.levels) level.openings ??= [];
+    return new ProjectWorkspace(document, defaultIdFactory, source);
   }
 
   get document(): ProjectDocument {
@@ -261,27 +298,59 @@ export class ProjectWorkspace {
     return this.#replaceActiveLevel((level) => {
       const wall = level.walls.find((candidate) => candidate.id === id);
       if (!wall) throw new Error(`Wall "${id}" does not exist.`);
-      const start = update.start ?? wall.path.start;
-      const currentEnd = update.end ?? wall.path.end;
-      const length = update.lengthMm ?? Math.hypot(
-        currentEnd.x - start.x,
-        currentEnd.y - start.y
+      this.#applyWallUpdate(wall, update);
+    });
+  }
+
+  #applyWallUpdate(wall: Level["walls"][number], update: WallUpdate): void {
+    const start = update.start ?? wall.path.start;
+    const currentEnd = update.end ?? wall.path.end;
+    const length = update.lengthMm ?? Math.hypot(
+      currentEnd.x - start.x,
+      currentEnd.y - start.y
+    );
+    const angle = update.angleDeg === undefined
+      ? Math.atan2(currentEnd.y - start.y, currentEnd.x - start.x)
+      : normalizeAngleDeg(update.angleDeg) * Math.PI / 180;
+    wall.path = {
+      kind: "straight",
+      start: { ...start },
+      end: update.end && update.lengthMm === undefined && update.angleDeg === undefined
+        ? { ...update.end }
+        : {
+            x: Math.round(start.x + Math.cos(angle) * length),
+            y: Math.round(start.y + Math.sin(angle) * length)
+          }
+    };
+    wall.thicknessMm = update.thicknessMm ?? wall.thicknessMm;
+    wall.heightMm = update.heightMm ?? wall.heightMm;
+  }
+
+  updateWallResolvingOpenings(
+    id: string,
+    update: WallUpdate,
+    resolution: OpeningConflictResolution
+  ): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const wall = level.walls.find((candidate) => candidate.id === id);
+      if (!wall) throw new Error(`Wall "${id}" does not exist.`);
+      this.#applyWallUpdate(wall, update);
+      const invalidIds = new Set(
+        level.openings
+          .filter((opening) =>
+            opening.hostWallId === id && !openingFitsWall(opening, wall)
+          )
+          .map(({ id: openingId }) => openingId)
       );
-      const angle = update.angleDeg === undefined
-        ? Math.atan2(currentEnd.y - start.y, currentEnd.x - start.x)
-        : normalizeAngleDeg(update.angleDeg) * Math.PI / 180;
-      wall.path = {
-        kind: "straight",
-        start: { ...start },
-        end: update.end && update.lengthMm === undefined && update.angleDeg === undefined
-          ? { ...update.end }
-          : {
-              x: Math.round(start.x + Math.cos(angle) * length),
-              y: Math.round(start.y + Math.sin(angle) * length)
-            }
-      };
-      wall.thicknessMm = update.thicknessMm ?? wall.thicknessMm;
-      wall.heightMm = update.heightMm ?? wall.heightMm;
+      if (resolution === "delete") {
+        level.openings = level.openings.filter(({ id: openingId }) =>
+          !invalidIds.has(openingId)
+        );
+      } else {
+        for (const opening of level.openings) {
+          if (invalidIds.has(opening.id)) fitOpeningToWall(opening, wall);
+        }
+      }
     });
   }
 
@@ -305,6 +374,43 @@ export class ProjectWorkspace {
       const count = level.walls.length;
       level.walls = level.walls.filter((wall) => wall.id !== id);
       if (level.walls.length === count) throw new Error(`Wall "${id}" does not exist.`);
+    });
+  }
+
+  addOpening(input: OpeningInput): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      level.openings ??= [];
+      level.openings.push({
+        ...structuredClone(input),
+        id: this.#idFactory("opening"),
+        extensions: {}
+      });
+    });
+  }
+
+  updateOpening(id: string, update: OpeningUpdate): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const opening = level.openings?.find((candidate) => candidate.id === id);
+      if (!opening) throw new Error(`Opening "${id}" does not exist.`);
+      Object.assign(opening, structuredClone(update));
+    });
+  }
+
+  moveOpening(id: string, deltaMm: number): ProjectWorkspace {
+    const opening = this.activeLevel.openings.find((candidate) => candidate.id === id);
+    if (!opening) throw new Error(`Opening "${id}" does not exist.`);
+    return this.updateOpening(id, {
+      positionMm: opening.positionMm + Math.round(deltaMm)
+    });
+  }
+
+  deleteOpening(id: string): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      const count = level.openings.length;
+      level.openings = level.openings.filter((opening) => opening.id !== id);
+      if (level.openings.length === count) {
+        throw new Error(`Opening "${id}" does not exist.`);
+      }
     });
   }
 
@@ -332,9 +438,7 @@ export class ProjectWorkspace {
       elevationMm: input.elevationMm ?? 0,
       extensions: {}
     });
-    const diagnostics = validateProjectDocument(candidate);
-    if (diagnostics.length) throw new ProjectValidationError(diagnostics);
-    return new ProjectWorkspace(candidate, this.#idFactory);
+    return this.#acceptCandidate(candidate);
   }
 
   updateFurniturePlacement(
@@ -375,9 +479,7 @@ export class ProjectWorkspace {
     if (update.widthMm !== undefined) definition.widthMm = update.widthMm;
     if (update.depthMm !== undefined) definition.depthMm = update.depthMm;
     if (update.heightMm !== undefined) definition.heightMm = update.heightMm;
-    const diagnostics = validateProjectDocument(candidate);
-    if (diagnostics.length) throw new ProjectValidationError(diagnostics);
-    return new ProjectWorkspace(candidate, this.#idFactory);
+    return this.#acceptCandidate(candidate);
   }
 
   makeFurniturePlacementUnique(id: string): ProjectWorkspace {
@@ -404,9 +506,7 @@ export class ProjectWorkspace {
     candidate.furnitureDefinitions ??= [];
     candidate.furnitureDefinitions.push(copy);
     placement.definitionId = copy.id;
-    const diagnostics = validateProjectDocument(candidate);
-    if (diagnostics.length) throw new ProjectValidationError(diagnostics);
-    return new ProjectWorkspace(candidate, this.#idFactory);
+    return this.#acceptCandidate(candidate);
   }
 
   deleteFurniturePlacement(id: string): ProjectWorkspace {

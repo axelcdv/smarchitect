@@ -11,6 +11,7 @@ export interface Level {
   baseElevationMm: number;
   defaultWallHeightMm: number;
   walls: Wall[];
+  openings: Opening[];
   furniturePlacements?: FurniturePlacement[];
   extensions: ExtensionData;
 }
@@ -48,6 +49,90 @@ export interface WallUpdate {
   angleDeg?: number;
   thicknessMm?: number;
   heightMm?: number;
+}
+
+export type PathDirection = "start" | "end";
+export type SwingDirection = "inward" | "outward";
+
+export interface HingedOperation {
+  kind: "hinged";
+  hingeSide: PathDirection;
+  swingDirection: SwingDirection;
+}
+
+export interface SlidingOperation {
+  kind: "sliding";
+  slideDirection: PathDirection;
+}
+
+export interface FixedOperation {
+  kind: "fixed";
+}
+
+interface OpeningBase {
+  id: string;
+  hostWallId: string;
+  positionMm: number;
+  widthMm: number;
+  heightMm: number;
+  extensions: ExtensionData;
+}
+
+export interface DoorOpening extends OpeningBase {
+  kind: "door";
+  operation: HingedOperation | SlidingOperation;
+}
+
+export interface WindowOpening extends OpeningBase {
+  kind: "window";
+  sillHeightMm: number;
+  operation: FixedOperation | HingedOperation | SlidingOperation;
+}
+
+export interface PassageOpening extends OpeningBase {
+  kind: "passage";
+}
+
+export type Opening = DoorOpening | WindowOpening | PassageOpening;
+type NewOpening<T extends Opening> = Omit<T, "id" | "extensions">;
+export type OpeningInput =
+  | NewOpening<DoorOpening>
+  | NewOpening<WindowOpening>
+  | NewOpening<PassageOpening>;
+
+export interface OpeningUpdate {
+  hostWallId?: string;
+  positionMm?: number;
+  widthMm?: number;
+  heightMm?: number;
+  sillHeightMm?: number;
+  operation?: FixedOperation | HingedOperation | SlidingOperation;
+}
+
+export type OpeningConflictResolution = "fit" | "delete";
+
+export interface LineSegmentMm {
+  start: PointMm;
+  end: PointMm;
+}
+
+export interface OpeningPlanGeometry {
+  start: PointMm;
+  end: PointMm;
+  operationKind: "passage" | FixedOperation["kind"] | HingedOperation["kind"] | SlidingOperation["kind"];
+  jambs: LineSegmentMm[];
+  panes: LineSegmentMm[];
+  slidingPanels: LineSegmentMm[];
+  hinge?: PointMm;
+  leafEnd?: PointMm;
+  swingArcStart?: PointMm;
+  swingClockwise?: boolean;
+  slideArrow?: {
+    tail: PointMm;
+    tip: PointMm;
+    firstWing: PointMm;
+    secondWing: PointMm;
+  };
 }
 
 export interface FurnitureDefinition {
@@ -125,6 +210,7 @@ export type EntityKind =
   | "project"
   | "level"
   | "wall"
+  | "opening"
   | "furniture_definition"
   | "furniture_placement";
 export type IdFactory = (kind: EntityKind) => string;

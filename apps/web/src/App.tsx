@@ -1,6 +1,7 @@
 import {
   deriveWallFaces,
   deriveWallJunctions,
+  distanceAlongWallPath,
   findWallAtPoint,
   findWallEndpointAtPoint,
   furnitureFootprintCorners,
@@ -11,10 +12,14 @@ import {
   snapPoint,
   snapWallDelta,
   wallAngleDeg,
+  wallPathLength,
+  type Opening,
+  type OpeningUpdate,
   type PointMm,
   type FurnitureDefinitionUpdate,
   type FurniturePlacementUpdate,
-  type Wall
+  type Wall,
+  type WallUpdate
 } from "@smarchitect/core";
 import {
   useRef,
@@ -27,6 +32,11 @@ import { useAutosavedProject } from "./use-autosaved-project.js";
 import { FurniturePlacementInspector } from "./FurniturePlacementInspector.js";
 import { ItemLibrary } from "./ItemLibrary.js";
 import { useFurnitureLibrary } from "./use-furniture-library.js";
+import {
+  createDefaultOpeningInput,
+  OpeningProperties,
+  OpeningSymbol
+} from "./OpeningEditor.js";
 import "./styles.css";
 
 type WallEditField =
@@ -58,6 +68,12 @@ export function App() {
   const [draftName, setDraftName] = useState("");
   const [operationError, setOperationError] = useState("");
   const [selectedWallId, setSelectedWallId] = useState<string>();
+  const [selectedOpeningId, setSelectedOpeningId] = useState<string>();
+  const [openingConflict, setOpeningConflict] = useState<{
+    wallId: string;
+    update: WallUpdate;
+    openingIds: string[];
+  }>();
   const [selectedFurnitureId, setSelectedFurnitureId] = useState<string>();
   const [placingDefinitionId, setPlacingDefinitionId] = useState<string>();
   const library = useFurnitureLibrary(setOperationError);
@@ -67,6 +83,12 @@ export function App() {
     | { kind: "draw"; start: PointMm }
     | { kind: "move"; wallId: string; start: PointMm }
     | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
+    | {
+        kind: "opening";
+        openingId: string;
+        start: PointMm;
+        startPositionMm: number;
+      }
     | { kind: "furnitureMove"; placementId: string; start: PointMm }
   >();
   const importInput = useRef<HTMLInputElement>(null);
@@ -85,7 +107,9 @@ export function App() {
   const activeLevel = workspace?.activeLevel;
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
+  const openings = activeLevel?.openings ?? [];
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
+  const selectedOpening = openings.find(({ id }) => id === selectedOpeningId);
   const furniturePlacements = activeLevel?.furniturePlacements ?? [];
   const selectedFurniture = furniturePlacements.find(
     ({ id }) => id === selectedFurnitureId
@@ -113,6 +137,7 @@ export function App() {
     const restored = await autosavedProject.navigateHistory(direction);
     if (restored) {
       setSelectedWallId(undefined);
+      setSelectedOpeningId(undefined);
       setSelectedFurnitureId(undefined);
       setOperationError("");
     }
@@ -147,6 +172,7 @@ export function App() {
           durable.activeLevel.furniturePlacements?.at(-1)?.id
         );
         setSelectedWallId(undefined);
+        setSelectedOpeningId(undefined);
         setMode("select");
         setPlacingDefinitionId(undefined);
       }
@@ -168,6 +194,7 @@ export function App() {
     if (furniture) {
       setSelectedFurnitureId(furniture.id);
       setSelectedWallId(undefined);
+      setSelectedOpeningId(undefined);
       setGesture({
         kind: "furnitureMove",
         placementId: furniture.id,
@@ -190,6 +217,7 @@ export function App() {
 
     const wall = findWallAtPoint(point, walls, view.width / 400);
     setSelectedWallId(wall?.id);
+    setSelectedOpeningId(undefined);
     setSelectedFurnitureId(undefined);
     if (wall) {
       setGesture({ kind: "move", wallId: wall.id, start: point });
@@ -228,8 +256,27 @@ export function App() {
         const candidates = walls.filter(({ id }) => id !== wall.id);
         const snapped = snapPoint(point, candidates, view.width / 80);
         const hasExactSnap = snapped.x !== point.x || snapped.y !== point.y;
-        await commit(workspace.updateWall(wall.id, {
+        await attemptWallUpdate(wall.id, {
           [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
+        });
+      }
+    } else if (gesture.kind === "opening") {
+      const opening = openings.find(({ id }) => id === gesture.openingId);
+      const wall = opening
+        ? walls.find(({ id }) => id === opening.hostWallId)
+        : undefined;
+      if (opening && wall) {
+        const pointerDelta = distanceAlongWallPath(wall, point)
+          - distanceAlongWallPath(wall, gesture.start);
+        const nextPosition = Math.max(
+          0,
+          Math.min(
+            wallPathLength(wall) - opening.widthMm,
+            Math.round(gesture.startPositionMm + pointerDelta)
+          )
+        );
+        await commit(workspace.updateOpening(opening.id, {
+          positionMm: nextPosition
         }));
       }
     } else {
@@ -274,7 +321,76 @@ export function App() {
       : field === "endX" ? { end: { ...selectedWall.path.end, x: Math.round(numeric) } }
       : field === "endY" ? { end: { ...selectedWall.path.end, y: Math.round(numeric) } }
       : { [field]: field === "angleDeg" ? numeric : Math.round(numeric) };
-    await commit(workspace.updateWall(selectedWall.id, update));
+    await attemptWallUpdate(selectedWall.id, update);
+  }
+
+  async function attemptWallUpdate(wallId: string, update: WallUpdate): Promise<void> {
+    if (!workspace) return;
+    try {
+      const durable = await commit(workspace.updateWall(wallId, update));
+      if (durable) setOpeningConflict(undefined);
+    } catch (cause) {
+      if (cause instanceof ProjectValidationError) {
+        const openingIds = cause.diagnostics.flatMap(({ path }) => {
+          const match = /^\/levels\/\d+\/openings\/(\d+)\//.exec(path);
+          const opening = match ? openings[Number(match[1])] : undefined;
+          return opening ? [opening.id] : [];
+        });
+        if (openingIds.length) {
+          setOpeningConflict({
+            wallId,
+            update,
+            openingIds: [...new Set(openingIds)]
+          });
+          setOperationError(
+            "Wall edit conflicts with hosted Openings. Choose an explicit resolution."
+          );
+          return;
+        }
+      }
+      setOperationError(cause instanceof Error ? cause.message : "Unable to edit Wall.");
+    }
+  }
+
+  async function resolveOpeningConflict(
+    resolution: "fit" | "delete"
+  ): Promise<void> {
+    if (!workspace || !openingConflict) return;
+    const durable = await commit(workspace.updateWallResolvingOpenings(
+      openingConflict.wallId,
+      openingConflict.update,
+      resolution
+    ));
+    if (durable) setOpeningConflict(undefined);
+  }
+
+  async function editOpening(update: OpeningUpdate): Promise<void> {
+    if (!workspace || !selectedOpening) return;
+    try {
+      await commit(workspace.updateOpening(selectedOpening.id, update));
+    } catch (cause) {
+      setOperationError(cause instanceof ProjectValidationError
+        ? cause.diagnostics.map(({ message }) => message).join(" ")
+        : cause instanceof Error ? cause.message : "Unable to edit Opening.");
+    }
+  }
+
+  async function addOpening(kind: Opening["kind"]): Promise<void> {
+    if (!workspace || !selectedWall) return;
+    try {
+      const durable = await commit(workspace.addOpening(
+        createDefaultOpeningInput(kind, selectedWall)
+      ));
+      if (durable) {
+        setSelectedOpeningId(durable.activeLevel.openings.at(-1)?.id);
+        setSelectedFurnitureId(undefined);
+        setMode("select");
+      }
+    } catch (cause) {
+      setOperationError(cause instanceof ProjectValidationError
+        ? cause.diagnostics.map(({ message }) => message).join(" ")
+        : cause instanceof Error ? cause.message : "Unable to add Opening.");
+    }
   }
 
   async function createProject(): Promise<void> {
@@ -493,6 +609,10 @@ export function App() {
             <span className="plan-count">
               {`${walls.length} ${walls.length === 1 ? "wall" : "walls"}`}
             </span>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("door")}>Add door</button>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("window")}>Add window</button>
+            <button disabled={isSaving || !selectedWall} type="button" onClick={() => void addOpening("passage")}>Add passage</button>
+            <span>{openings.length} {openings.length === 1 ? "opening" : "openings"}</span>
             <span>
               {`${furniturePlacements.length} Furniture ${furniturePlacements.length === 1 ? "Placement" : "Placements"}`}
             </span>
@@ -559,6 +679,33 @@ export function App() {
                 points={wallPolygonPoints(selectedWall)}
               />
             ) : null}
+            {openings.map((opening) => {
+              const host = walls.find(({ id }) => id === opening.hostWallId);
+              return host ? (
+                <OpeningSymbol
+                  key={opening.id}
+                  opening={opening}
+                  wall={host}
+                  selected={opening.id === selectedOpeningId}
+                  onPointerDown={(event) => {
+                    if (isTransitionPending()) return;
+                    const svg = event.currentTarget.ownerSVGElement;
+                    if (!svg) return;
+                    event.stopPropagation();
+                    setSelectedOpeningId(opening.id);
+                    setSelectedWallId(opening.hostWallId);
+                    setSelectedFurnitureId(undefined);
+                    setMode("select");
+                    setGesture({
+                      kind: "opening",
+                      openingId: opening.id,
+                      start: clientPoint(svg, event.clientX, event.clientY),
+                      startPositionMm: opening.positionMm
+                    });
+                  }}
+                />
+              ) : null;
+            })}
             {deriveWallJunctions(walls).map(({ point }) => (
               <circle className="junction" key={`${point.x}:${point.y}`} cx={point.x} cy={-point.y} r={view.width / 220} />
             ))}
@@ -592,6 +739,36 @@ export function App() {
                 }
               }}>Delete wall</button>
             </div>
+          ) : null}
+          {openingConflict ? (
+            <div className="opening-conflict" role="alert" aria-label="Opening conflict resolution">
+              <strong>Wall edit conflicts with hosted Openings</strong>
+              <p>
+                Affected: {openings
+                  .filter(({ id }) => openingConflict.openingIds.includes(id))
+                  .map(({ kind, id }) => `${kind} ${id}`)
+                  .join(", ")}
+              </p>
+              <button type="button" disabled={isSaving} onClick={() => void resolveOpeningConflict("fit")}>Fit openings and apply</button>
+              <button type="button" className="danger-button" disabled={isSaving} onClick={() => void resolveOpeningConflict("delete")}>Delete conflicting openings and apply</button>
+              <button type="button" disabled={isSaving} onClick={() => {
+                setOpeningConflict(undefined);
+                setOperationError("");
+              }}>Cancel wall edit</button>
+            </div>
+          ) : null}
+          {selectedOpening ? (
+            <OpeningProperties
+              opening={selectedOpening}
+              isSaving={isSaving}
+              onEdit={(update) => void editOpening(update)}
+              onDelete={() => {
+                void commit(workspace.deleteOpening(selectedOpening.id))
+                  .then((durable) => {
+                    if (durable) setSelectedOpeningId(undefined);
+                  });
+              }}
+            />
           ) : null}
           {selectedFurniture && selectedFurnitureDefinition ? (
             <FurniturePlacementInspector

@@ -85,6 +85,12 @@
             "$ref": "#/$defs/wall"
           }
         },
+        "openings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/opening"
+          }
+        },
         "furniturePlacements": {
           "type": "array",
           "items": {
@@ -127,6 +133,120 @@
         "thicknessMm": { "type": "integer", "exclusiveMinimum": 0 },
         "heightMm": { "type": "integer", "exclusiveMinimum": 0 },
         "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "opening": {
+      "oneOf": [
+        { "$ref": "#/$defs/door" },
+        { "$ref": "#/$defs/window" },
+        { "$ref": "#/$defs/passage" }
+      ]
+    },
+    "door": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "kind", "hostWallId", "positionMm", "widthMm", "heightMm",
+        "operation", "extensions"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/openingId" },
+        "kind": { "const": "door" },
+        "hostWallId": { "$ref": "#/$defs/wallId" },
+        "positionMm": { "type": "integer", "minimum": 0 },
+        "widthMm": { "$ref": "#/$defs/positiveDimension" },
+        "heightMm": { "$ref": "#/$defs/positiveDimension" },
+        "operation": {
+          "oneOf": [
+            { "$ref": "#/$defs/hingedOperation" },
+            { "$ref": "#/$defs/slidingOperation" }
+          ]
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "kind", "hostWallId", "positionMm", "widthMm", "heightMm",
+        "sillHeightMm", "operation", "extensions"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/openingId" },
+        "kind": { "const": "window" },
+        "hostWallId": { "$ref": "#/$defs/wallId" },
+        "positionMm": { "type": "integer", "minimum": 0 },
+        "widthMm": { "$ref": "#/$defs/positiveDimension" },
+        "heightMm": { "$ref": "#/$defs/positiveDimension" },
+        "sillHeightMm": { "type": "integer", "minimum": 0 },
+        "operation": {
+          "oneOf": [
+            { "$ref": "#/$defs/fixedOperation" },
+            { "$ref": "#/$defs/hingedOperation" },
+            { "$ref": "#/$defs/slidingOperation" }
+          ]
+        },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "passage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "kind", "hostWallId", "positionMm", "widthMm", "heightMm",
+        "extensions"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/openingId" },
+        "kind": { "const": "passage" },
+        "hostWallId": { "$ref": "#/$defs/wallId" },
+        "positionMm": { "type": "integer", "minimum": 0 },
+        "widthMm": { "$ref": "#/$defs/positiveDimension" },
+        "heightMm": { "$ref": "#/$defs/positiveDimension" },
+        "extensions": { "$ref": "#/$defs/extensions" }
+      }
+    },
+    "openingId": {
+      "type": "string",
+      "pattern": "^opening_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "wallId": {
+      "type": "string",
+      "pattern": "^wall_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "positiveDimension": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "pathDirection": {
+      "enum": ["start", "end"]
+    },
+    "fixedOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "const": "fixed" }
+      }
+    },
+    "hingedOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "hingeSide", "swingDirection"],
+      "properties": {
+        "kind": { "const": "hinged" },
+        "hingeSide": { "$ref": "#/$defs/pathDirection" },
+        "swingDirection": { "enum": ["inward", "outward"] }
+      }
+    },
+    "slidingOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "slideDirection"],
+      "properties": {
+        "kind": { "const": "sliding" },
+        "slideDirection": { "$ref": "#/$defs/pathDirection" }
       }
     },
     "furnitureDefinition": {
