@@ -18,6 +18,8 @@ import {
   type OpeningUpdate,
   type PointMm,
   type RoomLabel,
+  type FixtureDefinitionUpdate,
+  type FixturePlacementUpdate,
   type FurnitureDefinitionUpdate,
   type FurniturePlacementUpdate,
   type Wall,
@@ -31,9 +33,9 @@ import {
   type WheelEvent
 } from "react";
 import { useAutosavedProject } from "./use-autosaved-project.js";
-import { FurniturePlacementInspector } from "./FurniturePlacementInspector.js";
+import { PlacementInspector } from "./PlacementInspector.js";
 import { ItemLibrary } from "./ItemLibrary.js";
-import { useFurnitureLibrary } from "./use-furniture-library.js";
+import { useItemLibrary } from "./use-item-library.js";
 import {
   createDefaultOpeningInput,
   OpeningProperties,
@@ -79,10 +81,14 @@ export function App() {
     openingIds: string[];
   }>();
   const [selectedFurnitureId, setSelectedFurnitureId] = useState<string>();
-  const [placingDefinitionId, setPlacingDefinitionId] = useState<string>();
-  const library = useFurnitureLibrary(setOperationError);
+  const [selectedFixtureId, setSelectedFixtureId] = useState<string>();
+  const [placingItem, setPlacingItem] = useState<{
+    kind: "furniture" | "fixture";
+    definitionId: string;
+  }>();
+  const library = useItemLibrary(setOperationError);
   const [mode, setMode] = useState<
-    "draw" | "select" | "label" | "placeFurniture"
+    "draw" | "select" | "label" | "placeItem"
   >("draw");
   const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
   const [gesture, setGesture] = useState<
@@ -98,6 +104,7 @@ export function App() {
         startPositionMm: number;
       }
     | { kind: "furnitureMove"; placementId: string; start: PointMm }
+    | { kind: "fixtureMove"; placementId: string; start: PointMm }
   >();
   const importInput = useRef<HTMLInputElement>(null);
   const autosavedProject = useAutosavedProject();
@@ -122,14 +129,24 @@ export function App() {
   const selectedWall = walls.find(({ id }) => id === selectedWallId);
   const selectedOpening = openings.find(({ id }) => id === selectedOpeningId);
   const furniturePlacements = activeLevel?.furniturePlacements ?? [];
+  const fixturePlacements = activeLevel?.fixturePlacements ?? [];
   const selectedFurniture = furniturePlacements.find(
     ({ id }) => id === selectedFurnitureId
   );
   const selectedFurnitureDefinition = document?.furnitureDefinitions?.find(
     ({ id }) => id === selectedFurniture?.definitionId
   );
-  const selectedLibraryDefinition = library.definitions.find(
+  const selectedLibraryDefinition = library.furnitureDefinitions.find(
     ({ id }) => id === selectedFurnitureDefinition?.id
+  );
+  const selectedFixture = fixturePlacements.find(
+    ({ id }) => id === selectedFixtureId
+  );
+  const selectedFixtureDefinition = document?.fixtureDefinitions?.find(
+    ({ id }) => id === selectedFixture?.definitionId
+  );
+  const selectedFixtureLibraryDefinition = library.fixtureDefinitions.find(
+    ({ id }) => id === selectedFixtureDefinition?.id
   );
 
   async function commit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined> {
@@ -151,6 +168,7 @@ export function App() {
       setSelectedRoomLabelId(undefined);
       setSelectedOpeningId(undefined);
       setSelectedFurnitureId(undefined);
+      setSelectedFixtureId(undefined);
       setOperationError("");
     }
   }
@@ -171,23 +189,35 @@ export function App() {
     if (isTransitionPending()) return;
     const point = eventPoint(event);
     const snapTolerance = view.width / 80;
-    if (mode === "placeFurniture") {
-      const definition = library.definitions.find(
-        ({ id }) => id === placingDefinitionId
-      );
-      if (!workspace || !definition) return;
-      const durable = await commit(workspace.placeFurniture(definition, {
-        position: point
-      }));
+    if (mode === "placeItem") {
+      if (!workspace || !placingItem) return;
+      const definition = placingItem.kind === "furniture"
+        ? library.furnitureDefinitions.find(({ id }) =>
+          id === placingItem.definitionId)
+        : library.fixtureDefinitions.find(({ id }) =>
+          id === placingItem.definitionId);
+      if (!definition) return;
+      const next = placingItem.kind === "furniture"
+        ? workspace.placeFurniture(definition, { position: point })
+        : workspace.placeFixture(definition, { position: point });
+      const durable = await commit(next);
       if (durable) {
-        setSelectedFurnitureId(
-          durable.activeLevel.furniturePlacements?.at(-1)?.id
-        );
+        if (placingItem.kind === "furniture") {
+          setSelectedFurnitureId(
+            durable.activeLevel.furniturePlacements?.at(-1)?.id
+          );
+          setSelectedFixtureId(undefined);
+        } else {
+          setSelectedFixtureId(
+            durable.activeLevel.fixturePlacements?.at(-1)?.id
+          );
+          setSelectedFurnitureId(undefined);
+        }
         setSelectedWallId(undefined);
         setSelectedRoomLabelId(undefined);
         setSelectedOpeningId(undefined);
         setMode("select");
-        setPlacingDefinitionId(undefined);
+        setPlacingItem(undefined);
       }
       return;
     }
@@ -206,7 +236,30 @@ export function App() {
       setSelectedWallId(undefined);
       setSelectedOpeningId(undefined);
       setSelectedFurnitureId(undefined);
+      setSelectedFixtureId(undefined);
       setGesture({ kind: "move-label", labelId: label.id, start: point });
+      return;
+    }
+
+    const fixture = [...fixturePlacements].reverse().find((placement) => {
+      const definition = document?.fixtureDefinitions?.find(
+        ({ id }) => id === placement.definitionId
+      );
+      return definition
+        ? furniturePlacementContainsPoint(definition, placement, point)
+        : false;
+    });
+    if (fixture) {
+      setSelectedFixtureId(fixture.id);
+      setSelectedFurnitureId(undefined);
+      setSelectedWallId(undefined);
+      setSelectedRoomLabelId(undefined);
+      setSelectedOpeningId(undefined);
+      setGesture({
+        kind: "fixtureMove",
+        placementId: fixture.id,
+        start: point
+      });
       return;
     }
 
@@ -220,6 +273,7 @@ export function App() {
     });
     if (furniture) {
       setSelectedFurnitureId(furniture.id);
+      setSelectedFixtureId(undefined);
       setSelectedWallId(undefined);
       setSelectedRoomLabelId(undefined);
       setSelectedOpeningId(undefined);
@@ -248,6 +302,7 @@ export function App() {
     setSelectedRoomLabelId(undefined);
     setSelectedOpeningId(undefined);
     setSelectedFurnitureId(undefined);
+    setSelectedFixtureId(undefined);
     if (wall) {
       setGesture({ kind: "move", wallId: wall.id, start: point });
     }
@@ -267,6 +322,7 @@ export function App() {
         setSelectedWallId(undefined);
         setSelectedOpeningId(undefined);
         setSelectedFurnitureId(undefined);
+        setSelectedFixtureId(undefined);
         setMode("select");
       }
     } else if (gesture.kind === "draw") {
@@ -333,11 +389,23 @@ export function App() {
           }
         }));
       }
-    } else {
+    } else if (gesture.kind === "move-label") {
       await commit(workspace.moveRoomLabel(gesture.labelId, {
         x: point.x - gesture.start.x,
         y: point.y - gesture.start.y
       }));
+    } else {
+      const placement = fixturePlacements.find(
+        ({ id }) => id === gesture.placementId
+      );
+      if (placement) {
+        await commit(workspace.updateFixturePlacement(placement.id, {
+          position: {
+            x: placement.position.x + point.x - gesture.start.x,
+            y: placement.position.y + point.y - gesture.start.y
+          }
+        }));
+      }
     }
     setGesture(undefined);
   }
@@ -355,6 +423,23 @@ export function App() {
     if (!workspace || !selectedFurnitureDefinition) return;
     await commit(workspace.updateFurnitureDefinition(
       selectedFurnitureDefinition.id,
+      update
+    ));
+  }
+
+  async function editFixturePlacement(
+    update: FixturePlacementUpdate
+  ): Promise<void> {
+    if (!workspace || !selectedFixture) return;
+    await commit(workspace.updateFixturePlacement(selectedFixture.id, update));
+  }
+
+  async function editEmbeddedFixtureDefinition(
+    update: FixtureDefinitionUpdate
+  ): Promise<void> {
+    if (!workspace || !selectedFixtureDefinition) return;
+    await commit(workspace.updateFixtureDefinition(
+      selectedFixtureDefinition.id,
       update
     ));
   }
@@ -432,6 +517,7 @@ export function App() {
         setSelectedOpeningId(durable.activeLevel.openings.at(-1)?.id);
         setSelectedRoomLabelId(undefined);
         setSelectedFurnitureId(undefined);
+        setSelectedFixtureId(undefined);
         setMode("select");
       }
     } catch (cause) {
@@ -633,10 +719,10 @@ export function App() {
           </div>
           <ItemLibrary
             controller={library}
-            disabled={isSaving}
-            onPlace={(id) => {
-              setPlacingDefinitionId(id);
-              setMode("placeFurniture");
+            disabled={isSaving || library.isSaving}
+            onPlace={(kind, definitionId) => {
+              setPlacingItem({ kind, definitionId });
+              setMode("placeItem");
             }}
           />
           <dl className="project-facts">
@@ -685,6 +771,9 @@ export function App() {
             <span>{openings.length} {openings.length === 1 ? "opening" : "openings"}</span>
             <span>
               {`${furniturePlacements.length} Furniture ${furniturePlacements.length === 1 ? "Placement" : "Placements"}`}
+            </span>
+            <span>
+              {`${fixturePlacements.length} Fixture ${fixturePlacements.length === 1 ? "Placement" : "Placements"}`}
             </span>
             <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
             <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
@@ -754,6 +843,23 @@ export function App() {
                 />
               );
             })}
+            {fixturePlacements.map((placement) => {
+              const definition = document.fixtureDefinitions?.find(
+                ({ id }) => id === placement.definitionId
+              );
+              if (!definition) return null;
+              return (
+                <polygon
+                  key={placement.id}
+                  className={placement.id === selectedFixtureId
+                    ? "fixture-footprint selected-fixture"
+                    : "fixture-footprint"}
+                  points={furnitureFootprintCorners(definition, placement)
+                    .map(({ x, y }) => `${x},${-y}`)
+                    .join(" ")}
+                />
+              );
+            })}
             {selectedWall ? (
               <polygon
                 className="selected-wall"
@@ -777,6 +883,7 @@ export function App() {
                     setSelectedWallId(opening.hostWallId);
                     setSelectedRoomLabelId(undefined);
                     setSelectedFurnitureId(undefined);
+                    setSelectedFixtureId(undefined);
                     setMode("select");
                     setGesture({
                       kind: "opening",
@@ -911,9 +1018,9 @@ export function App() {
             />
           ) : null}
           {selectedFurniture && selectedFurnitureDefinition ? (
-            <FurniturePlacementInspector
+            <PlacementInspector
               definition={selectedFurnitureDefinition}
-              disabled={isSaving}
+              disabled={isSaving || library.isSaving}
               libraryDefinition={selectedLibraryDefinition}
               placement={selectedFurniture}
               onUpdatePlacement={(update) => void editFurniturePlacement(update)}
@@ -926,6 +1033,28 @@ export function App() {
                   workspace.deleteFurniturePlacement(selectedFurniture.id)
                 )) {
                   setSelectedFurnitureId(undefined);
+                }
+              }}
+            />
+          ) : null}
+          {selectedFixture && selectedFixtureDefinition ? (
+            <PlacementInspector
+              kind="Fixture"
+              definition={selectedFixtureDefinition}
+              disabled={isSaving || library.isSaving}
+              libraryDefinition={selectedFixtureLibraryDefinition}
+              placement={selectedFixture}
+              onUpdatePlacement={(update) => void editFixturePlacement(update)}
+              onUpdateDefinition={(update) =>
+                void editEmbeddedFixtureDefinition(update)}
+              onMakeUnique={() => void commit(
+                workspace.makeFixturePlacementUnique(selectedFixture.id)
+              )}
+              onDelete={async () => {
+                if (await commit(
+                  workspace.deleteFixturePlacement(selectedFixture.id)
+                )) {
+                  setSelectedFixtureId(undefined);
                 }
               }}
             />

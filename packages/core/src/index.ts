@@ -6,6 +6,13 @@ export {
   validateFurnitureLibrary
 } from "./furniture-library.js";
 export {
+  addFixtureDefinition,
+  createFixtureDefinition,
+  deleteFixtureDefinition,
+  updateFixtureDefinition,
+  validateFixtureLibrary
+} from "./fixture-library.js";
+export {
   furnitureFootprintCorners,
   furniturePlacementContainsPoint
 } from "./furniture-geometry.js";
@@ -48,6 +55,7 @@ export {
 export {
   CURRENT_SCHEMA_VERSION,
   type CreateFurnitureDefinitionOptions,
+  type CreateFixtureDefinitionOptions,
   type CreateProjectDocumentOptions,
   type Diagnostic,
   type DiagnosticSeverity,
@@ -59,6 +67,12 @@ export {
   type FurniturePlacement,
   type FurniturePlacementInput,
   type FurniturePlacementUpdate,
+  type FixtureDefinition,
+  type FixtureDefinitionInput,
+  type FixtureDefinitionUpdate,
+  type FixturePlacement,
+  type FixturePlacementInput,
+  type FixturePlacementUpdate,
   type IdFactory,
   type Level,
   type LineSegmentMm,
