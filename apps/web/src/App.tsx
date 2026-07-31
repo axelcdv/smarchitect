@@ -10,17 +10,22 @@ import {
 import {
   WorkspaceShell
 } from "./project/WorkspaceShell.js";
+import type { ProjectRepository } from "./project-persistence.js";
 import { WelcomeScreen } from "./project/WelcomeScreen.js";
 import { useAutosavedProject } from "./use-autosaved-project.js";
 import { useItemLibrary } from "./use-item-library.js";
 import "./styles.css";
 
-export function App() {
+export interface AppProps {
+  projectRepository?: ProjectRepository;
+}
+
+export function App({ projectRepository }: AppProps = {}) {
   const [draftName, setDraftName] = useState("");
   const [operationError, setOperationError] = useState("");
   const importInput = useRef<HTMLInputElement>(null);
   const library = useItemLibrary(setOperationError);
-  const autosavedProject = useAutosavedProject();
+  const autosavedProject = useAutosavedProject(projectRepository);
   const {
     workspace,
     yaml,
@@ -46,9 +51,10 @@ export function App() {
     return started;
   }
 
-  async function navigateHistory(direction: "undo" | "redo"): Promise<void> {
+  async function navigateHistory(direction: "undo" | "redo"): Promise<boolean> {
     const restored = await autosavedProject.navigateHistory(direction);
     if (restored) setOperationError("");
+    return restored !== undefined;
   }
 
   async function createProject(): Promise<void> {
@@ -108,6 +114,7 @@ export function App() {
       canRedo={canRedo}
       canUndo={canUndo}
       error={error}
+      operationError={operationError}
       importInputRef={importInput}
       isSaving={isSaving}
       isTransitionPending={isTransitionPending}
@@ -116,7 +123,7 @@ export function App() {
       yaml={yaml}
       onCommit={commit}
       onImport={(event) => void importProject(event)}
-      onNavigateHistory={(direction) => void navigateHistory(direction)}
+      onNavigateHistory={navigateHistory}
       onOperationError={setOperationError}
       onRenameProject={(value) => void renameProject(value)}
     />

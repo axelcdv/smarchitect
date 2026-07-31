@@ -18,6 +18,7 @@ export interface WorkspaceShellProps {
   workspace: ProjectWorkspace;
   yaml: string;
   error: string;
+  operationError: string;
   isSaving: boolean;
   canUndo: boolean;
   canRedo: boolean;
@@ -26,7 +27,7 @@ export interface WorkspaceShellProps {
   isTransitionPending(): boolean;
   onCommit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined>;
   onImport(event: ChangeEvent<HTMLInputElement>): void;
-  onNavigateHistory(direction: "undo" | "redo"): void;
+  onNavigateHistory(direction: "undo" | "redo"): Promise<boolean>;
   onOperationError(message: string): void;
   onRenameProject(value: string): void;
 }
@@ -35,6 +36,7 @@ export function WorkspaceShell({
   workspace,
   yaml,
   error,
+  operationError,
   isSaving,
   canUndo,
   canRedo,
@@ -52,8 +54,7 @@ export function WorkspaceShell({
   const activeProposal = workspace.activeDesignProposal;
 
   async function changeActivePlan(next: ProjectWorkspace): Promise<void> {
-    planEditor.current?.clearSelection();
-    await onCommit(next);
+    if (await onCommit(next)) planEditor.current?.clearSelection();
   }
 
   return (
@@ -66,8 +67,9 @@ export function WorkspaceShell({
         isSaving={isSaving}
         onImport={onImport}
         onNavigateHistory={(direction) => {
-          planEditor.current?.clearSelection();
-          onNavigateHistory(direction);
+          void onNavigateHistory(direction).then((restored) => {
+            if (restored) planEditor.current?.clearSelection();
+          });
         }}
         projectName={workspace.document.name}
         yaml={yaml}
@@ -117,7 +119,7 @@ export function WorkspaceShell({
           isSaving={isSaving}
           isTransitionPending={isTransitionPending}
           library={library}
-          operationError={error}
+          operationError={operationError}
           workspace={workspace}
           onCommit={onCommit}
           onOperationError={onOperationError}

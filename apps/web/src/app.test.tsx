@@ -9,9 +9,29 @@ import {
   screen,
   waitFor
 } from "@testing-library/react";
-import { ProjectWorkspace } from "@smarchitect/core";
+import {
+  ProjectWorkspace,
+  type ProjectHistorySnapshot
+} from "@smarchitect/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
+import type { ProjectRepository } from "./project-persistence.js";
+
+class FailableProjectRepository implements ProjectRepository {
+  snapshot?: ProjectHistorySnapshot;
+  failSaving = false;
+  saveAttempts = 0;
+
+  async load(): Promise<ProjectHistorySnapshot | undefined> {
+    return this.snapshot ? structuredClone(this.snapshot) : undefined;
+  }
+
+  async save(snapshot: ProjectHistorySnapshot): Promise<void> {
+    this.saveAttempts += 1;
+    if (this.failSaving) throw new Error("storage unavailable");
+    this.snapshot = structuredClone(snapshot);
+  }
+}
 
 beforeEach(async () => {
   await new Promise<void>((resolve, reject) => {
@@ -219,6 +239,84 @@ describe("minimal Project Workspace", () => {
     await waitFor(() => expect((screen.getByLabelText(
       "Project Document YAML"
     ) as HTMLTextAreaElement).value).toContain("end: { x: 1200"));
+  });
+
+  it("keeps editor selection when plan and history persistence fail", async () => {
+    const repository = new FailableProjectRepository();
+    render(<App projectRepository={repository} />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Durable selection" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByLabelText("Wall length (mm)");
+
+    repository.failSaving = true;
+    fireEvent.change(screen.getByLabelText("New Design Proposal name"), {
+      target: { value: "Rejected proposal" }
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Create from Existing State"
+    }));
+    expect(await screen.findByText("Autosave failed: storage unavailable"))
+      .toBeInTheDocument();
+    expect(screen.getByLabelText("Wall length (mm)")).toBeInTheDocument();
+
+    const saveAttempts = repository.saveAttempts;
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(repository.saveAttempts)
+      .toBe(saveAttempts + 1));
+    expect(screen.getByLabelText("Wall length (mm)")).toBeInTheDocument();
+  });
+
+  it("does not reset an inspector draft when persistence errors change", async () => {
+    const repository = new FailableProjectRepository();
+    render(<App projectRepository={repository} />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Durable inspector draft" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    Object.defineProperty(plan, "getBoundingClientRect", {
+      value: () => ({
+        left: 0, top: 0, width: 800, height: 520,
+        right: 800, bottom: 520, x: 0, y: 0, toJSON: () => ({})
+      })
+    });
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByLabelText("Wall length (mm)");
+    fireEvent.change(screen.getByLabelText("New Design Proposal name"), {
+      target: { value: "Draft plan" }
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Create from Existing State"
+    }));
+    await screen.findByText("Design Proposal");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
+    const length = await screen.findByLabelText("Wall length (mm)");
+    fireEvent.change(length, { target: { value: "4200" } });
+    expect(length).toHaveValue(4200);
+
+    repository.failSaving = true;
+    fireEvent.change(screen.getByLabelText("Rename Design Proposal"), {
+      target: { value: "Rejected rename" }
+    });
+    expect(await screen.findByText("Autosave failed: storage unavailable"))
+      .toBeInTheDocument();
+    expect(length).toHaveValue(4200);
   });
 
   it("adds, graphically moves, edits, deletes, and restores Opening types", async () => {
