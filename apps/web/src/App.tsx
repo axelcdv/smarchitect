@@ -1,19 +1,8 @@
 import {
-  deriveWallDragDelta,
-  exceedsWallDragThreshold,
-  findRoomLabelAtPoint,
-  distanceAlongWallPath,
-  findWallAtPoint,
-  findWallEndpointAtPoint,
-  furniturePlacementContainsPoint,
   ProjectValidationError,
   ProjectWorkspace,
-  snapAngle,
-  snapPoint,
-  wallPathLength,
   type Opening,
   type OpeningUpdate,
-  type PointMm,
   type FixtureDefinitionUpdate,
   type FixturePlacementUpdate,
   type FurnitureDefinitionUpdate,
@@ -23,8 +12,7 @@ import {
 import {
   useRef,
   useState,
-  type ChangeEvent,
-  type PointerEvent
+  type ChangeEvent
 } from "react";
 import { useAutosavedProject } from "./use-autosaved-project.js";
 import { useItemLibrary } from "./use-item-library.js";
@@ -35,6 +23,7 @@ import { WelcomeScreen } from "./project/WelcomeScreen.js";
 import { WorkspaceHeader } from "./project/WorkspaceHeader.js";
 import type { OpeningConflict } from "./plan-editor/OpeningConflictPanel.js";
 import { PlanCanvas } from "./plan-editor/PlanCanvas.js";
+import { usePlanGestures } from "./plan-editor/use-plan-gestures.js";
 import {
   SelectionInspector
 } from "./plan-editor/SelectionInspector.js";
@@ -45,54 +34,12 @@ import type {
 import type { WallEditField } from "./plan-editor/WallInspector.js";
 import "./styles.css";
 
-function moveWallForDrag(
-  workspace: ProjectWorkspace,
-  wallId: string,
-  start: PointMm,
-  current: PointMm,
-  snapToleranceMm: number
-): ProjectWorkspace {
-  const wall = workspace.activeLevel.walls.find(({ id }) => id === wallId);
-  if (!wall) return workspace;
-  const delta = deriveWallDragDelta(
-    wall,
-    start,
-    current,
-    workspace.activeLevel.walls.filter(({ id }) => id !== wall.id),
-    snapToleranceMm
-  );
-  return delta.x || delta.y ? workspace.moveWall(wall.id, delta) : workspace;
-}
-
 export function App() {
   const [draftName, setDraftName] = useState("");
   const [proposalName, setProposalName] = useState("");
   const [operationError, setOperationError] = useState("");
   const [openingConflict, setOpeningConflict] = useState<OpeningConflict>();
-  const [placingItem, setPlacingItem] = useState<{
-    kind: "furniture" | "fixture";
-    definitionId: string;
-  }>();
   const library = useItemLibrary(setOperationError);
-  const [mode, setMode] = useState<
-    "draw" | "select" | "label" | "placeItem"
-  >("draw");
-  const [view, setView] = useState({ x: -4000, y: -2600, width: 8000, height: 5200 });
-  const [gesture, setGesture] = useState<
-    | { kind: "draw"; start: PointMm }
-    | { kind: "move"; wallId: string; start: PointMm; current?: PointMm }
-    | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
-    | { kind: "add-label" }
-    | { kind: "move-label"; labelId: string; start: PointMm }
-    | {
-        kind: "opening";
-        openingId: string;
-        start: PointMm;
-        startPositionMm: number;
-      }
-    | { kind: "furnitureMove"; placementId: string; start: PointMm }
-    | { kind: "fixtureMove"; placementId: string; start: PointMm }
-  >();
   const importInput = useRef<HTMLInputElement>(null);
   const autosavedProject = useAutosavedProject();
   const {
@@ -113,17 +60,6 @@ export function App() {
   const diagnostics = workspace?.diagnostics ?? [];
   const walls = activeLevel?.walls ?? [];
   const roomLabels = activeLevel?.roomLabels ?? [];
-  const previewWorkspace = workspace && gesture?.kind === "move" && gesture.current
-    ? moveWallForDrag(
-        workspace,
-        gesture.wallId,
-        gesture.start,
-        gesture.current,
-        view.width / 80
-      )
-    : workspace;
-  const displayedWalls = previewWorkspace?.activeLevel.walls ?? walls;
-  const rooms = previewWorkspace?.rooms ?? workspace?.rooms ?? [];
   const openings = activeLevel?.openings ?? [];
   const furniturePlacements = activeLevel?.furniturePlacements ?? [];
   const fixturePlacements = activeLevel?.fixturePlacements ?? [];
@@ -159,6 +95,37 @@ export function App() {
   const selectedFixtureLibraryDefinition = library.fixtureDefinitions.find(
     ({ id }) => id === selectedFixtureDefinition?.id
   );
+  const {
+    mode,
+    setMode,
+    view,
+    previewWorkspace,
+    beginItemPlacement,
+    resetInteraction,
+    zoom,
+    pan,
+    beginPlanGesture,
+    previewPlanGesture,
+    finishPlanGesture,
+    cancelPlanGesture,
+    handleWheel,
+    beginOpeningGesture
+  } = usePlanGestures({
+    workspace,
+    selectedWall,
+    furnitureLibrary: library.furnitureDefinitions,
+    fixtureLibrary: library.fixtureDefinitions,
+    commit,
+    attemptWallUpdate,
+    isTransitionPending,
+    selectWall,
+    selectOpening,
+    selectRoomLabel,
+    selectFurniture,
+    selectFixture
+  });
+  const displayedWalls = previewWorkspace?.activeLevel.walls ?? walls;
+  const rooms = previewWorkspace?.rooms ?? workspace?.rooms ?? [];
 
   async function commit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined> {
     const durable = await autosavedProject.commit(next);
@@ -183,247 +150,11 @@ export function App() {
   function clearPlanSelection(): void {
     clearSelection();
     setOpeningConflict(undefined);
-    setPlacingItem(undefined);
-    setMode("select");
+    resetInteraction();
   }
 
   async function changeActivePlan(next: ProjectWorkspace): Promise<void> {
     if (await commit(next)) clearPlanSelection();
-  }
-
-  function clientPoint(svg: SVGSVGElement, clientX: number, clientY: number): PointMm {
-    const bounds = svg.getBoundingClientRect();
-    return {
-      x: Math.round(view.x + (clientX - bounds.left) / bounds.width * view.width),
-      y: Math.round(-(view.y + (clientY - bounds.top) / bounds.height * view.height))
-    };
-  }
-
-  function eventPoint(event: PointerEvent<SVGSVGElement>): PointMm {
-    return clientPoint(event.currentTarget, event.clientX, event.clientY);
-  }
-
-  async function beginPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
-    if (isTransitionPending()) return;
-    const point = eventPoint(event);
-    const snapTolerance = view.width / 80;
-    if (mode === "placeItem") {
-      if (!workspace || !placingItem) return;
-      const definition = placingItem.kind === "furniture"
-        ? library.furnitureDefinitions.find(({ id }) =>
-          id === placingItem.definitionId)
-        : library.fixtureDefinitions.find(({ id }) =>
-          id === placingItem.definitionId);
-      if (!definition) return;
-      const next = placingItem.kind === "furniture"
-        ? workspace.placeFurniture(definition, { position: point })
-        : workspace.placeFixture(definition, { position: point });
-      const durable = await commit(next);
-      if (durable) {
-        if (placingItem.kind === "furniture") {
-          const placementId =
-            durable.activeLevel.furniturePlacements?.at(-1)?.id;
-          if (placementId) selectFurniture(placementId);
-        } else {
-          const placementId =
-            durable.activeLevel.fixturePlacements?.at(-1)?.id;
-          if (placementId) selectFixture(placementId);
-        }
-        setMode("select");
-        setPlacingItem(undefined);
-      }
-      return;
-    }
-    if (mode === "draw") {
-      setGesture({ kind: "draw", start: snapPoint(point, walls, snapTolerance) });
-      return;
-    }
-    if (mode === "label") {
-      setGesture({ kind: "add-label" });
-      return;
-    }
-
-    const label = findRoomLabelAtPoint(point, roomLabels, view.width / 80);
-    if (label) {
-      selectRoomLabel(label.id);
-      setGesture({ kind: "move-label", labelId: label.id, start: point });
-      return;
-    }
-
-    const fixture = [...fixturePlacements].reverse().find((placement) => {
-      const definition = activePlan?.fixtureDefinitions?.find(
-        ({ id }) => id === placement.definitionId
-      );
-      return definition
-        ? furniturePlacementContainsPoint(definition, placement, point)
-        : false;
-    });
-    if (fixture) {
-      selectFixture(fixture.id);
-      setGesture({
-        kind: "fixtureMove",
-        placementId: fixture.id,
-        start: point
-      });
-      return;
-    }
-
-    const furniture = [...furniturePlacements].reverse().find((placement) => {
-      const definition = activePlan?.furnitureDefinitions?.find(
-        ({ id }) => id === placement.definitionId
-      );
-      return definition
-        ? furniturePlacementContainsPoint(definition, placement, point)
-        : false;
-    });
-    if (furniture) {
-      selectFurniture(furniture.id);
-      setGesture({
-        kind: "furnitureMove",
-        placementId: furniture.id,
-        start: point
-      });
-      return;
-    }
-
-    const endpointHit = selectedWall
-      ? findWallEndpointAtPoint(point, [selectedWall], view.width / 160)
-      : undefined;
-    if (endpointHit) {
-      setGesture({
-        kind: "endpoint",
-        wallId: endpointHit.wallId,
-        endpoint: endpointHit.endpoint
-      });
-      return;
-    }
-
-    const wall = findWallAtPoint(point, walls, view.width / 400);
-    selectWall(wall?.id);
-    if (wall) {
-      setGesture({ kind: "move", wallId: wall.id, start: point });
-    }
-  }
-
-  async function finishPlanGesture(event: PointerEvent<SVGSVGElement>): Promise<void> {
-    if (!workspace || !gesture || isTransitionPending()) return;
-    const point = eventPoint(event);
-    if (gesture.kind === "add-label") {
-      const next = workspace.addRoomLabel({
-        name: `Room ${roomLabels.length + 1}`,
-        position: point
-      });
-      const durable = await commit(next);
-      if (durable) {
-        const roomLabelId = durable.activeLevel.roomLabels.at(-1)?.id;
-        if (roomLabelId) selectRoomLabel(roomLabelId);
-        setMode("select");
-      }
-    } else if (gesture.kind === "draw") {
-      const exactSnap = snapPoint(point, walls, view.width / 80);
-      const snapped = exactSnap.x !== point.x || exactSnap.y !== point.y
-        ? exactSnap
-        : snapAngle(gesture.start, point);
-      if (snapped.x !== gesture.start.x || snapped.y !== gesture.start.y) {
-        const next = workspace.addWall({ start: gesture.start, end: snapped });
-        const durable = await commit(next);
-        if (durable) {
-          const wallId = durable.activeLevel.walls.at(-1)?.id;
-          if (wallId) selectWall(wallId);
-          setMode("select");
-        }
-      }
-    } else if (gesture.kind === "move") {
-      const wall = walls.find(({ id }) => id === gesture.wallId);
-      const movedFarEnough = gesture.current !== undefined
-        || exceedsWallDragThreshold(
-          gesture.start,
-          point,
-          view.width / 200
-      );
-      if (wall && movedFarEnough) {
-        const next = moveWallForDrag(
-          workspace,
-          gesture.wallId,
-          gesture.start,
-          point,
-          view.width / 80
-        );
-        if (next !== workspace) await commit(next);
-      }
-    } else if (gesture.kind === "endpoint") {
-      const wall = walls.find(({ id }) => id === gesture.wallId);
-      if (wall) {
-        const other = gesture.endpoint === "start" ? wall.path.end : wall.path.start;
-        const candidates = walls.filter(({ id }) => id !== wall.id);
-        const snapped = snapPoint(point, candidates, view.width / 80);
-        const hasExactSnap = snapped.x !== point.x || snapped.y !== point.y;
-        await attemptWallUpdate(wall.id, {
-          [gesture.endpoint]: hasExactSnap ? snapped : snapAngle(other, point)
-        });
-      }
-    } else if (gesture.kind === "opening") {
-      const opening = openings.find(({ id }) => id === gesture.openingId);
-      const wall = opening
-        ? walls.find(({ id }) => id === opening.hostWallId)
-        : undefined;
-      if (opening && wall) {
-        const pointerDelta = distanceAlongWallPath(wall, point)
-          - distanceAlongWallPath(wall, gesture.start);
-        const nextPosition = Math.max(
-          0,
-          Math.min(
-            wallPathLength(wall) - opening.widthMm,
-            Math.round(gesture.startPositionMm + pointerDelta)
-          )
-        );
-        await commit(workspace.updateOpening(opening.id, {
-          positionMm: nextPosition
-        }));
-      }
-    } else if (gesture.kind === "furnitureMove") {
-      const placement = furniturePlacements.find(
-        ({ id }) => id === gesture.placementId
-      );
-      if (placement) {
-        await commit(workspace.updateFurniturePlacement(placement.id, {
-          position: {
-            x: placement.position.x + point.x - gesture.start.x,
-            y: placement.position.y + point.y - gesture.start.y
-          }
-        }));
-      }
-    } else if (gesture.kind === "move-label") {
-      await commit(workspace.moveRoomLabel(gesture.labelId, {
-        x: point.x - gesture.start.x,
-        y: point.y - gesture.start.y
-      }));
-    } else {
-      const placement = fixturePlacements.find(
-        ({ id }) => id === gesture.placementId
-      );
-      if (placement) {
-        await commit(workspace.updateFixturePlacement(placement.id, {
-          position: {
-            x: placement.position.x + point.x - gesture.start.x,
-            y: placement.position.y + point.y - gesture.start.y
-          }
-        }));
-      }
-    }
-    setGesture(undefined);
-  }
-
-  function previewPlanGesture(event: PointerEvent<SVGSVGElement>): void {
-    if (gesture?.kind !== "move") return;
-    const point = eventPoint(event);
-    if (
-      !gesture.current
-      && !exceedsWallDragThreshold(gesture.start, point, view.width / 200)
-    ) {
-      return;
-    }
-    setGesture({ ...gesture, current: point });
   }
 
   async function editFurniturePlacement(
@@ -663,8 +394,7 @@ export function App() {
             }
           }}
           onPlaceItem={(kind, definitionId) => {
-            setPlacingItem({ kind, definitionId });
-            setMode("placeItem");
+            beginItemPlacement({ kind, definitionId });
           }}
           onProposalNameChange={setProposalName}
           onRenameProject={(value) => void renameProject(value)}
@@ -711,12 +441,12 @@ export function App() {
             <span>
               {`${fixturePlacements.length} Fixture ${fixturePlacements.length === 1 ? "Placement" : "Placements"}`}
             </span>
-            <button type="button" aria-label="Zoom in" onClick={() => setView((current) => ({ ...current, width: current.width * .8, height: current.height * .8 }))}>+</button>
-            <button type="button" aria-label="Zoom out" onClick={() => setView((current) => ({ ...current, width: current.width * 1.25, height: current.height * 1.25 }))}>−</button>
-            <button type="button" aria-label="Pan left" onClick={() => setView((current) => ({ ...current, x: current.x - current.width / 10 }))}>←</button>
-            <button type="button" aria-label="Pan right" onClick={() => setView((current) => ({ ...current, x: current.x + current.width / 10 }))}>→</button>
-            <button type="button" aria-label="Pan up" onClick={() => setView((current) => ({ ...current, y: current.y - current.height / 10 }))}>↑</button>
-            <button type="button" aria-label="Pan down" onClick={() => setView((current) => ({ ...current, y: current.y + current.height / 10 }))}>↓</button>
+            <button type="button" aria-label="Zoom in" onClick={() => zoom(.8)}>+</button>
+            <button type="button" aria-label="Zoom out" onClick={() => zoom(1.25)}>−</button>
+            <button type="button" aria-label="Pan left" onClick={() => pan("left")}>←</button>
+            <button type="button" aria-label="Pan right" onClick={() => pan("right")}>→</button>
+            <button type="button" aria-label="Pan up" onClick={() => pan("up")}>↑</button>
+            <button type="button" aria-label="Pan down" onClick={() => pan("down")}>↓</button>
           </div>
           <PlanCanvas
             levelName={activeLevel.name}
@@ -733,26 +463,9 @@ export function App() {
             onPointerDown={(event) => void beginPlanGesture(event)}
             onPointerMove={previewPlanGesture}
             onPointerUp={(event) => void finishPlanGesture(event)}
-            onPointerCancel={() => setGesture(undefined)}
-            onWheel={(event) => {
-              event.preventDefault();
-              const factor = event.deltaY > 0 ? 1.1 : .9;
-              setView((current) => ({ ...current, width: current.width * factor, height: current.height * factor }));
-            }}
-            onOpeningPointerDown={(event, opening) => {
-              if (isTransitionPending()) return;
-              const svg = event.currentTarget.ownerSVGElement;
-              if (!svg) return;
-              event.stopPropagation();
-              selectOpening(opening.id, opening.hostWallId);
-              setMode("select");
-              setGesture({
-                kind: "opening",
-                openingId: opening.id,
-                start: clientPoint(svg, event.clientX, event.clientY),
-                startPositionMm: opening.positionMm
-              });
-            }}
+            onPointerCancel={cancelPlanGesture}
+            onWheel={handleWheel}
+            onOpeningPointerDown={beginOpeningGesture}
           />
           <SelectionInspector
             selection={selection}
