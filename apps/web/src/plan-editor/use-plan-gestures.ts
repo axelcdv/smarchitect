@@ -55,7 +55,7 @@ function findPlacementAtPoint<
   });
 }
 
-function movedPlacement<
+export function movedPlacement<
   Placement extends FurniturePlacement
 >(
   placements: readonly Placement[],
@@ -93,7 +93,7 @@ export interface UsePlanGesturesOptions extends PlanGestureCommands {
   fixtureLibrary: readonly FixtureDefinition[];
 }
 
-function clientPoint(
+export function clientPoint(
   svg: SVGSVGElement,
   clientX: number,
   clientY: number,

@@ -6,10 +6,16 @@ import {
   screen,
   waitFor
 } from "@testing-library/react";
-import { ProjectWorkspace } from "@smarchitect/core";
+import {
+  ProjectHistory,
+  ProjectWorkspace
+} from "@smarchitect/core";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
-import { setPlanBounds } from "./test/app-test-setup.js";
+import {
+  FailableProjectRepository,
+  setPlanBounds
+} from "./test/app-test-setup.js";
 
 describe("App project lifecycle and shell integration", () => {
   it("creates, renames, and exposes a single-Level Project Document", async () => {
@@ -48,6 +54,29 @@ describe("App project lifecycle and shell integration", () => {
     expect(
       screen.getByText(/early-stage space planning/i)
     ).toBeInTheDocument();
+  });
+
+  it("restores a persisted Project and its history on mount", async () => {
+    const repository = new FailableProjectRepository();
+    const original = ProjectWorkspace.create("Recovered apartment");
+    const history = ProjectHistory.create(original);
+    history.accept(original.addWall({
+      start: { x: 0, y: 0 },
+      end: { x: 3600, y: 0 }
+    }));
+    repository.snapshot = history.snapshot();
+
+    render(<App projectRepository={repository} />);
+
+    expect(await screen.findByRole("heading", {
+      name: "Recovered apartment"
+    })).toBeInTheDocument();
+    expect(screen.getByText("1 wall")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Undo" })).toBeEnabled();
+    expect(
+      (screen.getByLabelText("Project Document YAML") as HTMLTextAreaElement)
+        .value
+    ).toContain("x: 3600");
   });
 
   it("imports a Project Document and exports it as YAML", async () => {
@@ -145,5 +174,118 @@ describe("App project lifecycle and shell integration", () => {
     expect(await screen.findByRole("button", {
       name: /Kitchen and dining/
     })).toBeInTheDocument();
+  });
+
+  it("resolves Opening conflicts while editing a Design Proposal", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Proposal opening conflicts" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    setPlanBounds(plan);
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByText("1 wall");
+    fireEvent.click(screen.getByRole("button", { name: "Add door" }));
+    await screen.findByText("1 opening");
+    fireEvent.change(screen.getByLabelText("New Design Proposal name"), {
+      target: { value: "Short wall" }
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Create from Existing State"
+    }));
+    await screen.findByText("Design Proposal");
+    fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
+
+    fireEvent.change(screen.getByLabelText("Wall length (mm)"), {
+      target: { value: "600" }
+    });
+    fireEvent.blur(screen.getByLabelText("Wall length (mm)"));
+    const resolution = await screen.findByRole("alert", {
+      name: "Opening conflict resolution"
+    });
+    expect(resolution).toHaveTextContent("door opening_");
+    fireEvent.click(screen.getByRole("button", {
+      name: "Fit openings and apply"
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Wall length (mm)")).toHaveValue(600);
+      expect((screen.getByLabelText(
+        "Project Document YAML"
+      ) as HTMLTextAreaElement).value).toContain("widthMm: 600");
+      expect(screen.queryByRole("alert", {
+        name: "Opening conflict resolution"
+      })).not.toBeInTheDocument();
+    });
+  });
+
+  it("keeps editor selection when plan and history persistence fail", async () => {
+    const repository = new FailableProjectRepository();
+    render(<App projectRepository={repository} />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Durable selection" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    setPlanBounds(plan);
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByLabelText("Wall length (mm)");
+
+    repository.failSaving = true;
+    fireEvent.change(screen.getByLabelText("New Design Proposal name"), {
+      target: { value: "Rejected proposal" }
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Create from Existing State"
+    }));
+    expect(await screen.findByText("Autosave failed: storage unavailable"))
+      .toBeInTheDocument();
+    expect(screen.getByLabelText("Wall length (mm)")).toBeInTheDocument();
+
+    const saveAttempts = repository.saveAttempts;
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(repository.saveAttempts)
+      .toBe(saveAttempts + 1));
+    expect(screen.getByLabelText("Wall length (mm)")).toBeInTheDocument();
+  });
+
+  it("does not reset an inspector draft when persistence errors change", async () => {
+    const repository = new FailableProjectRepository();
+    render(<App projectRepository={repository} />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Durable inspector draft" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    const plan = await screen.findByLabelText("Ground floor wall editor");
+    setPlanBounds(plan);
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await screen.findByLabelText("Wall length (mm)");
+    fireEvent.change(screen.getByLabelText("New Design Proposal name"), {
+      target: { value: "Draft plan" }
+    });
+    fireEvent.click(screen.getByRole("button", {
+      name: "Create from Existing State"
+    }));
+    await screen.findByText("Design Proposal");
+
+    fireEvent.click(screen.getByRole("button", { name: "Select" }));
+    fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
+    const length = await screen.findByLabelText("Wall length (mm)");
+    fireEvent.change(length, { target: { value: "4200" } });
+    expect(length).toHaveValue(4200);
+
+    repository.failSaving = true;
+    fireEvent.change(screen.getByLabelText("Rename Design Proposal"), {
+      target: { value: "Rejected rename" }
+    });
+    expect(await screen.findByText("Autosave failed: storage unavailable"))
+      .toBeInTheDocument();
+    expect(length).toHaveValue(4200);
   });
 });

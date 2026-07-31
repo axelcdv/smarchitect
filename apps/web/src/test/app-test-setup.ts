@@ -1,6 +1,11 @@
 import "@testing-library/jest-dom/vitest";
 import "fake-indexeddb/auto";
-import { cleanup } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  screen
+} from "@testing-library/react";
 import type { ProjectHistorySnapshot } from "@smarchitect/core";
 import { afterEach, beforeEach, vi } from "vitest";
 import type { ProjectRepository } from "../project-persistence.js";
@@ -34,6 +39,16 @@ export function setPlanBounds(plan: HTMLElement): void {
       y: 0,
       toJSON: () => ({})
     })
+  });
+}
+
+export async function drawDefaultWall(plan: HTMLElement): Promise<void> {
+  setPlanBounds(plan);
+  fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+  fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+  await screen.findByText("1 wall");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
   });
 }
 

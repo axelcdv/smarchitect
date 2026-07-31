@@ -8,8 +8,10 @@ import {
 } from "@testing-library/react";
 import { ProjectWorkspace } from "@smarchitect/core";
 import { describe, expect, it } from "vitest";
-import { App } from "../App.js";
 import { setPlanBounds } from "../test/app-test-setup.js";
+import {
+  PlanEditorTestHarness
+} from "../test/plan-editor-test-harness.js";
 
 describe("Room labels", () => {
   it("adds, edits, moves, deletes, and restores a Room Label", async () => {
@@ -25,16 +27,9 @@ describe("Room labels", () => {
         end: { x: end[0], y: end[1] }
       });
     }
-    const yaml = workspace.exportYaml();
-    const file = new File([yaml], "rooms.yaml", { type: "application/yaml" });
-    Object.defineProperty(file, "text", { value: async () => yaml });
+    render(<PlanEditorTestHarness initialWorkspace={workspace} />);
 
-    render(<App />);
-    fireEvent.change(screen.getByLabelText("Import Project Document"), {
-      target: { files: [file] }
-    });
-
-    const plan = await screen.findByLabelText("Ground floor wall editor");
+    const plan = screen.getByLabelText("Ground floor wall editor");
     setPlanBounds(plan);
     expect(screen.getByText("1 room")).toBeInTheDocument();
 

@@ -6,27 +6,31 @@ import {
   screen,
   waitFor
 } from "@testing-library/react";
+import { ProjectWorkspace } from "@smarchitect/core";
 import { describe, expect, it } from "vitest";
-import { App } from "../App.js";
 import {
-  FailableProjectRepository,
+  drawDefaultWall,
   setPlanBounds
 } from "../test/app-test-setup.js";
+import {
+  PlanEditorTestHarness
+} from "../test/plan-editor-test-harness.js";
+
+function renderWallEditor(name: string): void {
+  render(
+    <PlanEditorTestHarness
+      initialWorkspace={ProjectWorkspace.create(name)}
+    />
+  );
+}
 
 describe("Walls", () => {
   it("draws, selects, numerically edits, and deletes a Wall while updating YAML", async () => {
-    render(<App />);
-    fireEvent.change(screen.getByLabelText("Project name"), {
-      target: { value: "Wall editor" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    renderWallEditor("Wall editor");
 
-    const plan = await screen.findByLabelText("Ground floor wall editor");
-    setPlanBounds(plan);
-    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
-    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
-
-    expect(await screen.findByText("1 wall")).toBeInTheDocument();
+    const plan = screen.getByLabelText("Ground floor wall editor");
+    await drawDefaultWall(plan);
+    expect(screen.getByText("1 wall")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Wall length (mm)"), {
       target: { value: "4200" }
     });
@@ -85,17 +89,10 @@ describe("Walls", () => {
   });
 
   it("selects a Wall without nudging it and previews deliberate dragging", async () => {
-    render(<App />);
-    fireEvent.change(screen.getByLabelText("Project name"), {
-      target: { value: "Wall gestures" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    renderWallEditor("Wall gestures");
 
-    const plan = await screen.findByLabelText("Ground floor wall editor");
-    setPlanBounds(plan);
-    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
-    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
-    await screen.findByText("1 wall");
+    const plan = screen.getByLabelText("Ground floor wall editor");
+    await drawDefaultWall(plan);
 
     const selectedWall = plan.querySelector(".selected-wall");
     const initialPoints = selectedWall?.getAttribute("points");
@@ -128,17 +125,10 @@ describe("Walls", () => {
   });
 
   it("keeps a numeric field focused while composing a multi-character edit", async () => {
-    render(<App />);
-    fireEvent.change(screen.getByLabelText("Project name"), {
-      target: { value: "Buffered editing" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    renderWallEditor("Buffered editing");
 
-    const plan = await screen.findByLabelText("Ground floor wall editor");
-    setPlanBounds(plan);
-    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
-    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
-    await screen.findByText("1 wall");
+    const plan = screen.getByLabelText("Ground floor wall editor");
+    await drawDefaultWall(plan);
 
     const length = screen.getByLabelText("Wall length (mm)");
     length.focus();
@@ -157,71 +147,4 @@ describe("Walls", () => {
     ) as HTMLTextAreaElement).value).toContain("end: { x: 1200"));
   });
 
-  it("keeps editor selection when plan and history persistence fail", async () => {
-    const repository = new FailableProjectRepository();
-    render(<App projectRepository={repository} />);
-    fireEvent.change(screen.getByLabelText("Project name"), {
-      target: { value: "Durable selection" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
-
-    const plan = await screen.findByLabelText("Ground floor wall editor");
-    setPlanBounds(plan);
-    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
-    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
-    await screen.findByLabelText("Wall length (mm)");
-
-    repository.failSaving = true;
-    fireEvent.change(screen.getByLabelText("New Design Proposal name"), {
-      target: { value: "Rejected proposal" }
-    });
-    fireEvent.click(screen.getByRole("button", {
-      name: "Create from Existing State"
-    }));
-    expect(await screen.findByText("Autosave failed: storage unavailable"))
-      .toBeInTheDocument();
-    expect(screen.getByLabelText("Wall length (mm)")).toBeInTheDocument();
-
-    const saveAttempts = repository.saveAttempts;
-    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
-    await waitFor(() => expect(repository.saveAttempts)
-      .toBe(saveAttempts + 1));
-    expect(screen.getByLabelText("Wall length (mm)")).toBeInTheDocument();
-  });
-
-  it("does not reset an inspector draft when persistence errors change", async () => {
-    const repository = new FailableProjectRepository();
-    render(<App projectRepository={repository} />);
-    fireEvent.change(screen.getByLabelText("Project name"), {
-      target: { value: "Durable inspector draft" }
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
-
-    const plan = await screen.findByLabelText("Ground floor wall editor");
-    setPlanBounds(plan);
-    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
-    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
-    await screen.findByLabelText("Wall length (mm)");
-    fireEvent.change(screen.getByLabelText("New Design Proposal name"), {
-      target: { value: "Draft plan" }
-    });
-    fireEvent.click(screen.getByRole("button", {
-      name: "Create from Existing State"
-    }));
-    await screen.findByText("Design Proposal");
-
-    fireEvent.click(screen.getByRole("button", { name: "Select" }));
-    fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
-    const length = await screen.findByLabelText("Wall length (mm)");
-    fireEvent.change(length, { target: { value: "4200" } });
-    expect(length).toHaveValue(4200);
-
-    repository.failSaving = true;
-    fireEvent.change(screen.getByLabelText("Rename Design Proposal"), {
-      target: { value: "Rejected rename" }
-    });
-    expect(await screen.findByText("Autosave failed: storage unavailable"))
-      .toBeInTheDocument();
-    expect(length).toHaveValue(4200);
-  });
 });
