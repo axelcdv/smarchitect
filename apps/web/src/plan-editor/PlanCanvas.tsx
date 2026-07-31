@@ -53,6 +53,40 @@ export interface PlanCanvasProps {
   ) => void;
 }
 
+interface FootprintLayerProps {
+  definitions: readonly FurnitureDefinition[];
+  placements: readonly FurniturePlacement[];
+  footprintClassName: string;
+  selectedClassName: string;
+  selectedPlacementId?: string;
+}
+
+function FootprintLayer({
+  definitions,
+  placements,
+  footprintClassName,
+  selectedClassName,
+  selectedPlacementId
+}: FootprintLayerProps) {
+  return placements.map((placement) => {
+    const definition = definitions.find(
+      ({ id }) => id === placement.definitionId
+    );
+    if (!definition) return null;
+    return (
+      <polygon
+        key={placement.id}
+        className={placement.id === selectedPlacementId
+          ? `${footprintClassName} ${selectedClassName}`
+          : footprintClassName}
+        points={planPolygonPoints(
+          furnitureFootprintCorners(definition, placement)
+        )}
+      />
+    );
+  });
+}
+
 export function PlanCanvas({
   levelName,
   view,
@@ -135,40 +169,20 @@ export function PlanCanvas({
         </g>
       ))}
       <path className="wall-surface" d={wallSurfacePath(walls)} />
-      {furniturePlacements.map((placement) => {
-        const definition = furnitureDefinitions.find(
-          ({ id }) => id === placement.definitionId
-        );
-        if (!definition) return null;
-        return (
-          <polygon
-            key={placement.id}
-            className={placement.id === selectedFurnitureId
-              ? "furniture-footprint selected-furniture"
-              : "furniture-footprint"}
-            points={planPolygonPoints(
-              furnitureFootprintCorners(definition, placement)
-            )}
-          />
-        );
-      })}
-      {fixturePlacements.map((placement) => {
-        const definition = fixtureDefinitions.find(
-          ({ id }) => id === placement.definitionId
-        );
-        if (!definition) return null;
-        return (
-          <polygon
-            key={placement.id}
-            className={placement.id === selectedFixtureId
-              ? "fixture-footprint selected-fixture"
-              : "fixture-footprint"}
-            points={planPolygonPoints(
-              furnitureFootprintCorners(definition, placement)
-            )}
-          />
-        );
-      })}
+      <FootprintLayer
+        definitions={furnitureDefinitions}
+        placements={furniturePlacements}
+        footprintClassName="furniture-footprint"
+        selectedClassName="selected-furniture"
+        selectedPlacementId={selectedFurnitureId}
+      />
+      <FootprintLayer
+        definitions={fixtureDefinitions}
+        placements={fixturePlacements}
+        footprintClassName="fixture-footprint"
+        selectedClassName="selected-fixture"
+        selectedPlacementId={selectedFixtureId}
+      />
       {selectedWall ? (
         <polygon
           className="selected-wall"

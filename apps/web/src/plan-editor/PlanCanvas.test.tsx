@@ -3,6 +3,8 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type {
+  FixtureDefinition,
+  FixturePlacement,
   FurnitureDefinition,
   FurniturePlacement,
   Opening,
@@ -69,6 +71,22 @@ const furniturePlacement: FurniturePlacement = {
   id: "placed-chair",
   definitionId: furnitureDefinition.id,
   position: { x: 500, y: 500 },
+  rotationDeg: 0,
+  elevationMm: 0,
+  extensions: {}
+};
+const fixtureDefinition: FixtureDefinition = {
+  id: "sink",
+  name: "Sink",
+  widthMm: 600,
+  depthMm: 400,
+  heightMm: 900,
+  extensions: {}
+};
+const fixturePlacement: FixturePlacement = {
+  id: "placed-sink",
+  definitionId: fixtureDefinition.id,
+  position: { x: 1500, y: 500 },
   rotationDeg: 0,
   elevationMm: 0,
   extensions: {}
@@ -165,5 +183,44 @@ describe("PlanCanvas", () => {
       expect.anything(),
       opening
     );
+  });
+
+  it("renders furniture and fixture footprint layers independently", () => {
+    const { container } = render(
+      <PlanCanvas
+        levelName="Ground floor"
+        view={{ x: 0, y: 0, width: 5000, height: 4000 }}
+        rooms={[]}
+        walls={[]}
+        openings={[]}
+        roomLabels={[]}
+        furnitureDefinitions={[furnitureDefinition]}
+        furniturePlacements={[furniturePlacement]}
+        fixtureDefinitions={[fixtureDefinition]}
+        fixturePlacements={[fixturePlacement]}
+        selection={{ kind: "fixture", placementId: fixturePlacement.id }}
+        onPointerDown={() => undefined}
+        onPointerMove={() => undefined}
+        onPointerUp={() => undefined}
+        onPointerCancel={() => undefined}
+        onWheel={() => undefined}
+        onOpeningPointerDown={() => undefined}
+      />
+    );
+
+    const furniture = container.querySelector(".furniture-footprint");
+    const fixture = container.querySelector(".fixture-footprint");
+    expect(furniture).toHaveAttribute(
+      "points",
+      "250,-250 750,-250 750,-750 250,-750"
+    );
+    expect(furniture).not.toHaveClass("selected-furniture");
+    expect(fixture).toHaveAttribute(
+      "points",
+      "1200,-300 1800,-300 1800,-700 1200,-700"
+    );
+    expect(fixture).toHaveClass("selected-fixture");
+    expect(furniture?.compareDocumentPosition(fixture!))
+      .toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 });
