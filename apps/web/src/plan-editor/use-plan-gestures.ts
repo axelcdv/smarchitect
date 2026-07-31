@@ -10,6 +10,7 @@ import {
   wallPathLength,
   type FixtureDefinition,
   type FurnitureDefinition,
+  type FurniturePlacement,
   type Opening,
   type PointMm,
   type ProjectWorkspace,
@@ -35,6 +36,44 @@ const INITIAL_VIEW: PlanCanvasView = {
   width: 8000,
   height: 5200
 };
+
+function findPlacementAtPoint<
+  Definition extends FurnitureDefinition,
+  Placement extends FurniturePlacement
+>(
+  definitions: readonly Definition[] | undefined,
+  placements: readonly Placement[],
+  point: PointMm
+): Placement | undefined {
+  return [...placements].reverse().find((placement) => {
+    const definition = definitions?.find(
+      ({ id }) => id === placement.definitionId
+    );
+    return definition
+      ? furniturePlacementContainsPoint(definition, placement, point)
+      : false;
+  });
+}
+
+function movedPlacement<
+  Placement extends FurniturePlacement
+>(
+  placements: readonly Placement[],
+  placementId: string,
+  start: PointMm,
+  end: PointMm
+): Pick<Placement, "id"> & { position: PointMm } | undefined {
+  const placement = placements.find(({ id }) => id === placementId);
+  return placement
+    ? {
+      id: placement.id,
+      position: {
+        x: placement.position.x + end.x - start.x,
+        y: placement.position.y + end.y - start.y
+      }
+    }
+    : undefined;
+}
 
 export interface PlanGestureCommands {
   commit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined>;
@@ -175,14 +214,11 @@ export function usePlanGestures({
       return;
     }
 
-    const fixture = [...fixturePlacements].reverse().find((placement) => {
-      const definition = activePlan?.fixtureDefinitions?.find(
-        ({ id }) => id === placement.definitionId
-      );
-      return definition
-        ? furniturePlacementContainsPoint(definition, placement, point)
-        : false;
-    });
+    const fixture = findPlacementAtPoint(
+      activePlan?.fixtureDefinitions,
+      fixturePlacements,
+      point
+    );
     if (fixture) {
       selectFixture(fixture.id);
       setGesture({
@@ -193,14 +229,11 @@ export function usePlanGestures({
       return;
     }
 
-    const furniture = [...furniturePlacements].reverse().find((placement) => {
-      const definition = activePlan?.furnitureDefinitions?.find(
-        ({ id }) => id === placement.definitionId
-      );
-      return definition
-        ? furniturePlacementContainsPoint(definition, placement, point)
-        : false;
-    });
+    const furniture = findPlacementAtPoint(
+      activePlan?.furnitureDefinitions,
+      furniturePlacements,
+      point
+    );
     if (furniture) {
       selectFurniture(furniture.id);
       setGesture({
@@ -313,15 +346,15 @@ export function usePlanGestures({
         }));
       }
     } else if (gesture.kind === "furnitureMove") {
-      const placement = furniturePlacements.find(
-        ({ id }) => id === gesture.placementId
+      const placement = movedPlacement(
+        furniturePlacements,
+        gesture.placementId,
+        gesture.start,
+        point
       );
       if (placement) {
         await commit(workspace.updateFurniturePlacement(placement.id, {
-          position: {
-            x: placement.position.x + point.x - gesture.start.x,
-            y: placement.position.y + point.y - gesture.start.y
-          }
+          position: placement.position
         }));
       }
     } else if (gesture.kind === "move-label") {
@@ -330,15 +363,15 @@ export function usePlanGestures({
         y: point.y - gesture.start.y
       }));
     } else {
-      const placement = fixturePlacements.find(
-        ({ id }) => id === gesture.placementId
+      const placement = movedPlacement(
+        fixturePlacements,
+        gesture.placementId,
+        gesture.start,
+        point
       );
       if (placement) {
         await commit(workspace.updateFixturePlacement(placement.id, {
-          position: {
-            x: placement.position.x + point.x - gesture.start.x,
-            y: placement.position.y + point.y - gesture.start.y
-          }
+          position: placement.position
         }));
       }
     }
