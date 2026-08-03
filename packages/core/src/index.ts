@@ -26,6 +26,16 @@ export {
   type ProjectHistorySnapshot
 } from "./project-history.js";
 export {
+  exportProjectArchive,
+  importProjectArchive,
+  previewProjectArchiveMigration,
+  ProjectArchiveError,
+  type ImportedProjectArchive,
+  type ProjectArchiveDocumentMigrationPreview,
+  type ProjectArchiveMigrationPreview,
+  type ProjectCheckpoint
+} from "./project-archive.js";
+export {
   parseProjectDocument,
   validateProjectDocument
 } from "./validation.js";

@@ -112,4 +112,33 @@ activeLevelId: level_00000000-0000-4000-8000-000000000002
     expect(history.workspace.document.name).toBe("Safe home");
     expect(history.canUndo).toBe(false);
   });
+
+  it("restores a Checkpoint as a new state without deleting later history", () => {
+    const history = ProjectHistory.create(ProjectWorkspace.create("Original"));
+    const checkpoint = history.workspace.exportYaml();
+    history.transact((workspace) => workspace.rename("Later edit"));
+    const later = history.workspace.exportYaml();
+
+    history.restoreCheckpoint(checkpoint);
+
+    expect(history.workspace.document.name).toBe("Original");
+    expect(history.snapshot().entries).toEqual([checkpoint, later, checkpoint]);
+    expect(history.undo().exportYaml()).toBe(later);
+  });
+
+  it("undoes a restore to the active state while retaining a Redo branch", () => {
+    const history = ProjectHistory.create(ProjectWorkspace.create("A"));
+    const checkpoint = history.workspace.exportYaml();
+    history.transact((workspace) => workspace.rename("B"));
+    const activeBeforeRestore = history.workspace.exportYaml();
+    history.transact((workspace) => workspace.rename("C"));
+    const laterHistory = history.workspace.exportYaml();
+    history.undo();
+
+    history.restoreCheckpoint(checkpoint);
+
+    expect(history.undo().exportYaml()).toBe(activeBeforeRestore);
+    expect(history.snapshot().retainedEntries).toEqual([laterHistory]);
+    expect(history.undo().document.name).toBe("A");
+  });
 });

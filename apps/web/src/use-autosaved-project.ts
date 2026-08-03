@@ -1,7 +1,8 @@
 import {
   parseProjectDocument,
   ProjectWorkspace,
-  type Diagnostic
+  type Diagnostic,
+  type ProjectCheckpoint
 } from "@smarchitect/core";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -34,6 +35,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     canUndo: false,
     canRedo: false
   });
+  const [checkpoints, setCheckpoints] = useState<ProjectCheckpoint[]>([]);
 
   function refreshHistoryControls(project: AutosavedProject): void {
     setHistoryControls({
@@ -68,6 +70,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
           : parseProjectDocument(yamlDraftRef.current).diagnostics);
         syncActiveWorkspace(restored.workspace);
         refreshHistoryControls(restored);
+        setCheckpoints(restored.checkpoints);
       })
       .catch(() => {
         if (active && !projectRef.current) {
@@ -113,14 +116,56 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     return durable;
   }
 
-  async function startAutosave(next: ProjectWorkspace): Promise<boolean> {
+  async function startAutosave(
+    next: ProjectWorkspace,
+    importedCheckpoints: readonly ProjectCheckpoint[] = []
+  ): Promise<boolean> {
     const durable = await persist(async () => {
-      const project = await AutosavedProject.create(next, repositoryRef.current!);
+      const project = await AutosavedProject.create(
+        next,
+        repositoryRef.current!,
+        importedCheckpoints
+      );
       projectRef.current = project;
       refreshHistoryControls(project);
+      setCheckpoints(project.checkpoints);
       return project.workspace;
     });
     return durable !== undefined;
+  }
+
+  async function createCheckpoint(name: string): Promise<boolean> {
+    const project = projectRef.current;
+    if (!project || transitionPending.current || yamlDraftRef.current !== undefined) {
+      return false;
+    }
+    transitionPending.current = true;
+    setIsSaving(true);
+    try {
+      await project.createCheckpoint(name);
+      setCheckpoints(project.checkpoints);
+      setPersistenceError("");
+      return true;
+    } catch (cause) {
+      setPersistenceError(cause instanceof Error
+        ? `Checkpoint failed: ${cause.message}`
+        : "Checkpoint creation failed.");
+      return false;
+    } finally {
+      transitionPending.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function restoreCheckpoint(checkpointId: string): Promise<boolean> {
+    if (yamlDraftRef.current !== undefined) return false;
+    const project = projectRef.current;
+    if (!project) return false;
+    const durable = await persist(() => project.restoreCheckpoint(checkpointId));
+    if (!durable) return false;
+    refreshHistoryControls(project);
+    setCheckpoints(project.checkpoints);
+    return true;
   }
 
   async function navigateHistory(
@@ -187,8 +232,11 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     isSaving,
     canUndo: historyControls.canUndo,
     canRedo: historyControls.canRedo,
+    checkpoints,
     commit,
     startAutosave,
+    createCheckpoint,
+    restoreCheckpoint,
     navigateHistory,
     editYaml,
     applyYaml,
