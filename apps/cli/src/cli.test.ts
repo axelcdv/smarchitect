@@ -36,6 +36,47 @@ function outputCollector(): {
 }
 
 describe("smarchitect validate", () => {
+  it("validates golden authored syntax after entity-oriented edits", async () => {
+    const source = readFileSync(new URL(
+      "../../../packages/core/src/fixtures/authored-project-1.1.0.yaml",
+      import.meta.url
+    ), "utf8");
+    const imported = ProjectWorkspace.importYaml(source);
+    const proposal = imported.document.designProposals![0]!;
+    const edited = imported
+      .selectDesignProposal(proposal.id)
+      .updateLevel({ name: "CLI edited proposal level" })
+      .renameDesignProposal(proposal.id, "CLI edited proposal");
+    const editedYaml = edited.exportYaml();
+    const stdout = outputCollector();
+    const stderr = outputCollector();
+
+    const exitCode = await runCli(["validate", "-"], {
+      readFile: async () => {
+        throw new Error("stdin validation must not read a file");
+      },
+      readStdin: async () => editedYaml,
+      stdout: stdout.write,
+      stderr: stderr.write
+    });
+
+    expect(editedYaml).toContain(
+      "name: CLI edited proposal level # proposal level entity comment"
+    );
+    expect(editedYaml).toContain(
+      "name: CLI edited proposal # design proposal entity comment"
+    );
+    expect(editedYaml).toContain("# proposal level entity comment");
+    expect(editedYaml).toContain("authoredOrder: preserved");
+    expect(editedYaml).toContain("reviewStatus: authored");
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout.values.join(""))).toEqual({
+      valid: true,
+      diagnostics: []
+    });
+    expect(stderr.values).toEqual([]);
+  });
+
   it("validates a project carried through the complete Project Workspace seam", async () => {
     const ids = [
       "project_00000000-0000-4000-8000-000000000001",
@@ -153,6 +194,9 @@ describe("smarchitect migrate", () => {
     expect(migrated).toContain("# golden project comment");
     expect(migrated).toContain("# wall entity comment");
     expect(migrated).toContain("plumbingZone: A");
+    expect(migrated).toContain("# design proposal entity comment");
+    expect(migrated).toContain("# proposal level entity comment");
+    expect(migrated).toContain("reviewStatus: authored");
     expect(migrated.indexOf("name: Golden authored project"))
       .toBeLessThan(migrated.indexOf("schemaVersion: 1.1.0"));
     expect(ProjectWorkspace.importYaml(migrated).diagnostics)

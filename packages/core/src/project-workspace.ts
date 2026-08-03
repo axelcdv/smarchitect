@@ -18,6 +18,7 @@ import {
   type FurniturePlacementUpdate,
   type IdFactory,
   type Level,
+  type LevelUpdate,
   type Opening,
   type OpeningConflictResolution,
   type OpeningInput,
@@ -517,6 +518,20 @@ export class ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
     candidate.name = assertNonEmptyName(name, "Project");
     return this.#acceptCandidate(candidate);
+  }
+
+  updateLevel(update: LevelUpdate): ProjectWorkspace {
+    return this.#replaceActiveLevel((level) => {
+      if (update.name !== undefined) {
+        level.name = assertNonEmptyName(update.name, "Level");
+      }
+      if (update.baseElevationMm !== undefined) {
+        level.baseElevationMm = update.baseElevationMm;
+      }
+      if (update.defaultWallHeightMm !== undefined) {
+        level.defaultWallHeightMm = update.defaultWallHeightMm;
+      }
+    });
   }
 
   #replaceActiveLevel(update: (level: Level) => void): ProjectWorkspace {

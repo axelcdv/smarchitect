@@ -19,7 +19,7 @@ import {
 } from "./test/app-test-setup.js";
 
 describe("App project lifecycle and shell integration", () => {
-  it("preserves the golden authored YAML through a GUI operation", async () => {
+  it("preserves the golden authored YAML through GUI entity operations", async () => {
     const source = authoredProjectSource;
     const file = new File([source], "authored-project.yaml", {
       type: "application/yaml"
@@ -36,6 +36,12 @@ describe("App project lifecycle and shell integration", () => {
     fireEvent.blur(rename);
 
     await screen.findByRole("heading", { name: "GUI renamed project" });
+    fireEvent.click(screen.getByRole("button", { name: /Authored alternative/ }));
+    const proposalRename = await screen.findByLabelText("Rename Design Proposal");
+    fireEvent.change(proposalRename, {
+      target: { value: "GUI refined alternative" }
+    });
+    await waitFor(() => expect(proposalRename).toHaveValue("GUI refined alternative"));
     const yaml = (screen.getByLabelText(
       "Project Document YAML"
     ) as HTMLTextAreaElement).value;
@@ -44,6 +50,12 @@ describe("App project lifecycle and shell integration", () => {
     );
     expect(yaml).toContain("# wall entity comment");
     expect(yaml).toContain("plumbingZone: A");
+    expect(yaml).toContain("# proposal level entity comment");
+    expect(yaml).toContain("authoredOrder: preserved");
+    expect(yaml).toContain(
+      "name: GUI refined alternative # design proposal entity comment"
+    );
+    expect(yaml).toContain("reviewStatus: authored");
     expect(yaml.indexOf("name: GUI renamed project"))
       .toBeLessThan(yaml.indexOf("schemaVersion:"));
   });

@@ -76,4 +76,25 @@ activeLevelId: level_00000000-0000-4000-8000-000000000002
 existingStateRevision: 0
 existingStateRevisedAt: 2026-08-03T00:00:00.000Z
 activePlan: { kind: existing-state }
-designProposals: []
+designProposals:
+  - name: Authored alternative # design proposal entity comment
+    sourceRevision: 0
+    id: design_proposal_00000000-0000-4000-8000-000000000010
+    sourceRevisedAt: 2026-08-03T00:00:00.000Z
+    activeLevelId: level_00000000-0000-4000-8000-000000000011
+    furnitureDefinitions: []
+    fixtureDefinitions: []
+    levels:
+      - name: Proposal floor # proposal level entity comment
+        id: level_00000000-0000-4000-8000-000000000011
+        walls: []
+        roomLabels: []
+        openings: []
+        furniturePlacements: []
+        fixturePlacements: []
+        defaultWallHeightMm: 2400
+        baseElevationMm: 100
+        extensions:
+          https://example.com/proposal-level: { authoredOrder: preserved }
+    extensions:
+      https://example.com/proposal: { reviewStatus: authored }

@@ -21,6 +21,12 @@ export interface Level {
   extensions: ExtensionData;
 }
 
+export interface LevelUpdate {
+  name?: string;
+  baseElevationMm?: number;
+  defaultWallHeightMm?: number;
+}
+
 export interface PointMm {
   x: number;
   y: number;

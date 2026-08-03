@@ -84,6 +84,7 @@ export {
   type FixturePlacementUpdate,
   type IdFactory,
   type Level,
+  type LevelUpdate,
   type LineSegmentMm,
   type MeasurementUnits,
   type DoorOpening,
