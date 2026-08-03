@@ -15,7 +15,7 @@ export type PlacingItem = {
 };
 
 export type PlanGesture =
-  | { kind: "draw"; start: PointMm }
+  | { kind: "draw"; start: PointMm; current?: PointMm }
   | { kind: "move"; wallId: string; start: PointMm; current?: PointMm }
   | { kind: "endpoint"; wallId: string; endpoint: "start" | "end" }
   | { kind: "add-label" }

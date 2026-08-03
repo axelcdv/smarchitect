@@ -152,6 +152,17 @@ describe("usePlanGestures", () => {
     await act(async () => {
       await result.current.beginPlanGesture(pointerEvent(svg, 110, 280));
     });
+    act(() => {
+      result.current.previewPlanGesture(pointerEvent(svg, 410, 280));
+    });
+
+    expect(result.current.wallPreview?.path.kind).toBe("straight");
+    expect(result.current.wallPreview?.path.start.x).toBe(-3000);
+    expect(Math.abs(result.current.wallPreview?.path.start.y ?? NaN)).toBe(0);
+    expect(result.current.wallPreview?.path.end).toEqual({ x: 0, y: 0 });
+    const previewPath = result.current.wallPreview?.path;
+    expect(commit).not.toHaveBeenCalled();
+
     await act(async () => {
       await result.current.finishPlanGesture(pointerEvent(svg, 410, 280));
     });
@@ -159,6 +170,7 @@ describe("usePlanGestures", () => {
     expect(commit).toHaveBeenCalledOnce();
     const committed = commit.mock.calls[0]![0];
     const path = committed.activeLevel.walls[0]!.path;
+    expect(path).toEqual(previewPath);
     expect(path.start.x).toBe(-3000);
     expect(Math.abs(path.start.y)).toBe(0);
     expect(path.end).toEqual({ x: 0, y: 0 });

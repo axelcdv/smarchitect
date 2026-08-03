@@ -396,6 +396,14 @@ h2 {
   pointer-events: none;
 }
 
+.wall-preview {
+  fill: rgb(217 87 63 / 58%);
+  pointer-events: none;
+  stroke: var(--accent-dark);
+  stroke-dasharray: 40 24;
+  stroke-width: 16;
+}
+
 .derived-room {
   pointer-events: none;
 }

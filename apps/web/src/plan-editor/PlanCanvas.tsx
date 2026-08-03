@@ -29,6 +29,7 @@ export interface PlanCanvasProps {
   view: PlanCanvasView;
   rooms: readonly Room[];
   walls: readonly Wall[];
+  wallPreview?: Wall;
   openings: readonly Opening[];
   roomLabels: readonly RoomLabel[];
   furnitureDefinitions: readonly FurnitureDefinition[];
@@ -86,6 +87,7 @@ export function PlanCanvas({
   view,
   rooms,
   walls,
+  wallPreview,
   openings,
   roomLabels,
   furnitureDefinitions,
@@ -163,6 +165,12 @@ export function PlanCanvas({
         </g>
       ))}
       <path className="wall-surface" d={wallSurfacePath(walls)} />
+      {wallPreview ? (
+        <polygon
+          className="wall-preview"
+          points={wallPolygonPoints(wallPreview)}
+        />
+      ) : null}
       <FootprintLayer
         definitions={furnitureDefinitions}
         placements={furniturePlacements}

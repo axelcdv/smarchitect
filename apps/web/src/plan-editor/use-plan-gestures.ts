@@ -55,6 +55,18 @@ function findPlacementAtPoint<
   });
 }
 
+function snappedDrawEnd(
+  start: PointMm,
+  point: PointMm,
+  walls: Wall[],
+  snapToleranceMm: number
+): PointMm {
+  const exactSnap = snapPoint(point, walls, snapToleranceMm);
+  return exactSnap.x !== point.x || exactSnap.y !== point.y
+    ? exactSnap
+    : snapAngle(start, point);
+}
+
 export function movedPlacement<
   Placement extends FurniturePlacement
 >(
@@ -160,6 +172,27 @@ export function usePlanGestures({
       view.width / 80
     )
     : workspace;
+  const wallPreview = workspace
+    && gesture?.kind === "draw"
+    && gesture.current
+    ? (() => {
+      const end = snappedDrawEnd(
+        gesture.start,
+        gesture.current,
+        walls,
+        view.width / 80
+      );
+      return end.x !== gesture.start.x || end.y !== gesture.start.y
+        ? {
+          id: "wall-preview",
+          path: { kind: "straight" as const, start: gesture.start, end },
+          thicknessMm: 150,
+          heightMm: workspace.activeLevel.defaultWallHeightMm,
+          extensions: {}
+        }
+        : undefined;
+    })()
+    : undefined;
 
   function eventPoint(event: PointerEvent<SVGSVGElement>): PointMm {
     return clientPoint(
@@ -297,10 +330,12 @@ export function usePlanGestures({
         setMode("select");
       }
     } else if (gesture.kind === "draw") {
-      const exactSnap = snapPoint(point, walls, view.width / 80);
-      const snapped = exactSnap.x !== point.x || exactSnap.y !== point.y
-        ? exactSnap
-        : snapAngle(gesture.start, point);
+      const snapped = snappedDrawEnd(
+        gesture.start,
+        point,
+        walls,
+        view.width / 80
+      );
       if (snapped.x !== gesture.start.x || snapped.y !== gesture.start.y) {
         const next = workspace.addWall({ start: gesture.start, end: snapped });
         const durable = await commit(next);
@@ -398,6 +433,10 @@ export function usePlanGestures({
   function previewPlanGesture(
     event: PointerEvent<SVGSVGElement>
   ): void {
+    if (gesture?.kind === "draw") {
+      setGesture({ ...gesture, current: eventPoint(event) });
+      return;
+    }
     if (gesture?.kind !== "move") return;
     const point = eventPoint(event);
     if (
@@ -475,6 +514,7 @@ export function usePlanGestures({
     setMode,
     view,
     previewWorkspace,
+    wallPreview,
     beginItemPlacement,
     resetInteraction,
     zoom,
