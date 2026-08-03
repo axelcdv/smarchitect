@@ -99,11 +99,28 @@ export function clientPoint(
   clientY: number,
   view: PlanCanvasView
 ): PointMm {
+  const screenTransform = svg.getScreenCTM?.();
+  if (screenTransform) {
+    const point = new DOMPoint(clientX, clientY).matrixTransform(
+      screenTransform.inverse()
+    );
+    return {
+      x: Math.round(point.x),
+      y: Math.round(-point.y)
+    };
+  }
+
   const bounds = svg.getBoundingClientRect();
+  const scale = Math.min(
+    bounds.width / view.width,
+    bounds.height / view.height
+  );
+  const horizontalInset = (bounds.width - view.width * scale) / 2;
+  const verticalInset = (bounds.height - view.height * scale) / 2;
   return {
-    x: Math.round(view.x + (clientX - bounds.left) / bounds.width * view.width),
+    x: Math.round(view.x + (clientX - bounds.left - horizontalInset) / scale),
     y: Math.round(-(view.y
-      + (clientY - bounds.top) / bounds.height * view.height))
+      + (clientY - bounds.top - verticalInset) / scale))
   };
 }
 
