@@ -1,6 +1,7 @@
 import {
   ProjectValidationError,
   ProjectWorkspace,
+  previewProjectDocumentMigration,
   type Diagnostic
 } from "@smarchitect/core";
 
@@ -18,8 +19,10 @@ function jsonLine(value: unknown): string {
 function usage(): string {
   return `Usage:
   smarchitect validate [PROJECT_DOCUMENT|-]
+  smarchitect migrate [PROJECT_DOCUMENT|-]
 
 Validate a Project Document from a file or standard input.
+Migrate a supported older document to standard output without changing the input.
 `;
 }
 
@@ -34,7 +37,7 @@ export async function runCli(
     return 0;
   }
 
-  if (command !== "validate" || args.length > 2) {
+  if ((command !== "validate" && command !== "migrate") || args.length > 2) {
     dependencies.stderr(usage());
     return 2;
   }
@@ -44,6 +47,21 @@ export async function runCli(
       input === "-"
         ? await dependencies.readStdin()
         : await dependencies.readFile(input);
+
+    if (command === "migrate") {
+      try {
+        dependencies.stdout(previewProjectDocumentMigration(source).migratedSource);
+        return 0;
+      } catch (error) {
+        if (!(error instanceof ProjectValidationError)) throw error;
+        dependencies.stderr(jsonLine({
+          migrated: false,
+          diagnostics: error.diagnostics
+        }));
+        return 1;
+      }
+    }
+
     let diagnostics: Diagnostic[] = [];
 
     try {

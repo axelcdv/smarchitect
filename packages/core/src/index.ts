@@ -30,6 +30,9 @@ export {
   validateProjectDocument
 } from "./validation.js";
 export {
+  previewProjectDocumentMigration
+} from "./migration.js";
+export {
   deriveWallFaces,
   deriveWallDragDelta,
   deriveWallJunctions,
@@ -56,6 +59,8 @@ export {
 } from "./opening-geometry.js";
 export {
   CURRENT_SCHEMA_VERSION,
+  PREVIOUS_SCHEMA_VERSION,
+  PROJECT_DOCUMENT_SCHEMA_DIALECT,
   type ActivePlanSelection,
   type CreateFurnitureDefinitionOptions,
   type CreateFixtureDefinitionOptions,
@@ -95,6 +100,7 @@ export {
   type PlanSnapshot,
   type ProposalStaleness,
   type ProjectDocument,
+  type ProjectDocumentMigrationPreview,
   type Room,
   type RoomLabel,
   type RoomLabelInput,

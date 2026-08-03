@@ -1,6 +1,7 @@
-import { parseDocument, stringify, type Document } from "yaml";
+import { isSeq, parseDocument, stringify, type Document } from "yaml";
 import {
   CURRENT_SCHEMA_VERSION,
+  PROJECT_DOCUMENT_SCHEMA_DIALECT,
   type CreateProjectDocumentOptions,
   type ActivePlanSelection,
   type DesignProposal,
@@ -173,6 +174,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function entityId(value: unknown): string | undefined {
+  return isRecord(value) && typeof value.id === "string"
+    ? value.id
+    : undefined;
+}
+
 function reconcileYamlNode(
   yamlDocument: Document,
   path: readonly (string | number)[],
@@ -182,6 +189,34 @@ function reconcileYamlNode(
   if (valuesMatch(previous, next)) return;
 
   if (Array.isArray(previous) && Array.isArray(next)) {
+    const previousIds = previous.map(entityId);
+    const nextIds = next.map(entityId);
+    const sequence = yamlDocument.getIn(path, true);
+    if (
+      previous.length > 0
+      && previousIds.every((id): id is string => id !== undefined)
+      && nextIds.every((id): id is string => id !== undefined)
+      && new Set(previousIds).size === previousIds.length
+      && new Set(nextIds).size === nextIds.length
+      && isSeq(sequence)
+    ) {
+      const previousById = new Map(
+        previousIds.map((id, index) => [id, previous[index]])
+      );
+      const nodesById = new Map(
+        previousIds.map((id, index) => [id, sequence.items[index]])
+      );
+      sequence.items = next.map((value, index) =>
+        nodesById.get(nextIds[index]!) ?? yamlDocument.createNode(value)
+      );
+      next.forEach((value, index) => {
+        const oldValue = previousById.get(nextIds[index]!);
+        if (oldValue !== undefined) {
+          reconcileYamlNode(yamlDocument, [...path, index], oldValue, value);
+        }
+      });
+      return;
+    }
     if (previous.length === next.length) {
       next.forEach((value, index) => {
         reconcileYamlNode(yamlDocument, [...path, index], previous[index], value);
@@ -296,6 +331,7 @@ export function createProjectDocument(
   };
   const document: ProjectDocument = {
     schemaVersion: CURRENT_SCHEMA_VERSION,
+    schemaDialect: PROJECT_DOCUMENT_SCHEMA_DIALECT,
     id: projectId,
     name: assertNonEmptyName(name, "Project"),
     units: "metric",

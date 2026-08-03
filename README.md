@@ -45,6 +45,14 @@ pnpm --filter @smarchitect/cli start -- validate - < project.yaml
 The command prints JSON diagnostics and exits with `0` for a valid document,
 `1` for an invalid document, and `2` for usage or input errors.
 
+Supported older documents can be migrated explicitly without changing the
+input file. Review the YAML written to standard output before replacing or
+importing anything:
+
+```sh
+pnpm --filter @smarchitect/cli start -- migrate legacy-project.yaml > migrated-project.yaml
+```
+
 ## Open format
 
 The authoritative JSON Schema is
@@ -53,3 +61,7 @@ It uses JSON Schema Draft 2020-12. The YAML representation is designed for
 source control and manual or AI-assisted editing; imports reject YAML aliases,
 anchors, and custom tags so a document remains explicit. Third-party data must
 live in an `extensions` map keyed by a globally namespaced absolute URI.
+Current documents declare both `schemaVersion: 1.1.0` and
+`schemaDialect: https://json-schema.org/draft/2020-12/schema`. Version 1.0.0 is
+accepted only through the preview-and-confirm migration flow; unsupported newer
+versions are never rewritten.

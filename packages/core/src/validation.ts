@@ -18,6 +18,7 @@ import projectDocumentSchema from "./project-document.schema.json" with {
 };
 import {
   CURRENT_SCHEMA_VERSION,
+  PREVIOUS_SCHEMA_VERSION,
   type Diagnostic,
   type ParseProjectDocumentResult,
   type PlanSnapshot,
@@ -41,6 +42,11 @@ function schemaErrorPath(error: ErrorObject): string {
   if (error.keyword === "required") {
     const missingProperty = String(error.params.missingProperty);
     return `${error.instancePath}/${missingProperty}`;
+  }
+
+  if (error.keyword === "additionalProperties") {
+    const property = String(error.params.additionalProperty);
+    return `${error.instancePath}/${property}`;
   }
 
   return error.instancePath || "/";
@@ -332,11 +338,20 @@ function unsupportedSchemaVersionDiagnostic(value: unknown): Diagnostic | undefi
     "schemaVersion" in value &&
     value.schemaVersion !== CURRENT_SCHEMA_VERSION
   ) {
+    const sourceVersion = String(value.schemaVersion);
+    if (sourceVersion === PREVIOUS_SCHEMA_VERSION) {
+      return {
+        code: "schema-version.migration-required",
+        severity: "error",
+        path: "/schemaVersion",
+        message: `Schema version "${sourceVersion}" is supported after a previewed migration to "${CURRENT_SCHEMA_VERSION}".`
+      };
+    }
     return {
       code: "schema-version.unsupported",
       severity: "error",
       path: "/schemaVersion",
-      message: `Unsupported schema version "${String(value.schemaVersion)}". Expected "${CURRENT_SCHEMA_VERSION}".`
+      message: `Schema version "${sourceVersion}" is not supported. This application supports "${PREVIOUS_SCHEMA_VERSION}" migrations and current version "${CURRENT_SCHEMA_VERSION}"; the source was left untouched.`
     };
   }
 
