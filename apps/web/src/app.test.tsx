@@ -18,6 +18,109 @@ import {
 } from "./test/app-test-setup.js";
 
 describe("App project lifecycle and shell integration", () => {
+  it("keeps incomplete YAML as a draft and locks graphical editing", async () => {
+    const repository = new FailableProjectRepository();
+    const workspace = ProjectWorkspace.create("Draft-safe home");
+    repository.snapshot = ProjectHistory.create(workspace).snapshot();
+
+    render(<App projectRepository={repository} />);
+
+    const yamlEditor = await screen.findByLabelText("Project Document YAML");
+    fireEvent.change(yamlEditor, { target: { value: "schemaVersion:" } });
+
+    expect(screen.getByText("Draft not applied")).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Graphical editor locked" }))
+      .toHaveTextContent(/read-only.*YAML draft/i);
+    expect(screen.getByRole("button", { name: "Draw wall" })).toBeDisabled();
+    expect(screen.getByLabelText("Rename project")).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply YAML" }));
+
+    expect(await screen.findByRole("alert", { name: "YAML diagnostics" }))
+      .toHaveTextContent(/error.*\/schemaVersion.*line 1.*column/i);
+    expect(screen.getByRole("heading", { name: "Draft-safe home" }))
+      .toBeInTheDocument();
+    expect((yamlEditor as HTMLTextAreaElement).value).toBe("schemaVersion:");
+    expect(repository.snapshot?.cursor).toBe(0);
+  });
+
+  it("applies valid YAML once and supports Undo and Redo", async () => {
+    const repository = new FailableProjectRepository();
+    const workspace = ProjectWorkspace.create("Before YAML");
+    repository.snapshot = ProjectHistory.create(workspace).snapshot();
+
+    render(<App projectRepository={repository} />);
+
+    const yamlEditor = await screen.findByLabelText("Project Document YAML");
+    fireEvent.change(yamlEditor, {
+      target: { value: workspace.rename("After YAML").exportYaml() }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply YAML" }));
+
+    expect(await screen.findByRole("heading", { name: "After YAML" }))
+      .toBeInTheDocument();
+    expect(repository.snapshot?.cursor).toBe(1);
+    expect(screen.getByText("Valid YAML")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Draw wall" })).toBeEnabled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    expect(await screen.findByRole("heading", { name: "Before YAML" }))
+      .toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+    expect(await screen.findByRole("heading", { name: "After YAML" }))
+      .toBeInTheDocument();
+  });
+
+  it.each(["schema", "semantic"] as const)(
+    "rejects a complete YAML document with a %s failure atomically",
+    async (failure) => {
+      const repository = new FailableProjectRepository();
+      const workspace = ProjectWorkspace.create("Atomic rejection");
+      repository.snapshot = ProjectHistory.create(workspace).snapshot();
+      const source = failure === "schema"
+        ? workspace.exportYaml().replace(/^id: .+\n/m, "")
+        : workspace.exportYaml().replace(
+          /^activeLevelId: .+$/m,
+          "activeLevelId: level_00000000-0000-4000-8000-000000000099"
+        );
+      const expectedPath = failure === "schema" ? "/id" : "/activeLevelId";
+
+      render(<App projectRepository={repository} />);
+      const yamlEditor = await screen.findByLabelText("Project Document YAML");
+      fireEvent.change(yamlEditor, { target: { value: source } });
+      fireEvent.click(screen.getByRole("button", { name: "Apply YAML" }));
+
+      expect(await screen.findByRole("alert", { name: "YAML diagnostics" }))
+        .toHaveTextContent(expectedPath);
+      expect(screen.getByRole("heading", { name: "Atomic rejection" }))
+        .toBeInTheDocument();
+      expect(yamlEditor).toHaveValue(source);
+      await waitFor(() => expect(repository.snapshot?.draft).toBe(source));
+      expect(repository.snapshot?.cursor).toBe(0);
+      expect(repository.snapshot?.entries).toHaveLength(1);
+    }
+  );
+
+  it("recovers an invalid YAML draft after reload", async () => {
+    const repository = new FailableProjectRepository();
+    const workspace = ProjectWorkspace.create("Reload-safe home");
+    repository.snapshot = ProjectHistory.create(workspace).snapshot();
+    const first = render(<App projectRepository={repository} />);
+    const yamlEditor = await screen.findByLabelText("Project Document YAML");
+
+    fireEvent.change(yamlEditor, { target: { value: "invalid: [yaml" } });
+    await waitFor(() => expect(repository.snapshot?.draft)
+      .toBe("invalid: [yaml"));
+    first.unmount();
+    render(<App projectRepository={repository} />);
+
+    expect(await screen.findByLabelText("Project Document YAML"))
+      .toHaveValue("invalid: [yaml");
+    expect(screen.getByText("Draft not applied")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Reload-safe home" }))
+      .toBeInTheDocument();
+  });
+
   it("creates, renames, and exposes a single-Level Project Document", async () => {
     render(<App />);
 

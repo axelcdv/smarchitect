@@ -36,6 +36,7 @@ export interface PlanEditorHandle {
 export interface PlanEditorProps {
   workspace: ProjectWorkspace;
   isSaving: boolean;
+  isReadOnly?: boolean;
   operationError: string;
   library: ItemLibraryController;
   isTransitionPending(): boolean;
@@ -47,12 +48,14 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
   function PlanEditor({
     workspace,
     isSaving,
+    isReadOnly = false,
     operationError,
     library,
     isTransitionPending,
     onCommit,
     onOperationError
   }, ref) {
+    const editingDisabled = isSaving || isReadOnly;
     const [openingConflict, setOpeningConflict] = useState<OpeningConflict>();
     const activePlan = workspace.activePlan;
     const activeLevel = workspace.activeLevel;
@@ -305,11 +308,20 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
           </div>
           <span className="scale-chip">Metric · millimetres</span>
         </div>
+        {isReadOnly ? (
+          <p
+            className="draft-lock-notice"
+            role="status"
+            aria-label="Graphical editor locked"
+          >
+            The graphical editor is read-only while a YAML draft is not applied.
+          </p>
+        ) : null}
         <PlanToolbar
           fixturePlacementCount={fixturePlacements.length}
           furniturePlacementCount={furniturePlacements.length}
           hasSelectedWall={Boolean(selectedWall)}
-          isSaving={isSaving}
+          isSaving={editingDisabled}
           mode={mode}
           openingCount={openings.length}
           roomCount={rooms.length}
@@ -343,7 +355,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
           selection={selection}
           wall={{
             wall: selectedWall,
-            disabled: isSaving,
+            disabled: editingDisabled,
             resetKey: operationError,
             onEdit: (field, value) => void editSelected(field, value),
             onDelete: () => {
@@ -357,7 +369,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
           roomLabel={{
             roomLabel: selectedRoomLabel,
             diagnostics,
-            disabled: isSaving,
+            disabled: editingDisabled,
             resetKey: operationError,
             onEdit: (field, value) =>
               void editSelectedRoomLabel(field, value),
@@ -373,7 +385,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
             opening: selectedOpening,
             conflict: openingConflict,
             openings,
-            disabled: isSaving,
+            disabled: editingDisabled,
             onResolveConflict: (resolution) =>
               void resolveOpeningConflict(resolution),
             onCancelConflict: () => {
@@ -393,7 +405,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
             placement: selectedFurniture,
             definition: selectedFurnitureDefinition,
             libraryDefinition: selectedLibraryDefinition,
-            disabled: isSaving || library.isSaving,
+            disabled: editingDisabled || library.isSaving,
             onUpdatePlacement: (update) =>
               void editFurniturePlacement(update),
             onUpdateDefinition: (update) =>
@@ -417,7 +429,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
             placement: selectedFixture,
             definition: selectedFixtureDefinition,
             libraryDefinition: selectedFixtureLibraryDefinition,
-            disabled: isSaving || library.isSaving,
+            disabled: editingDisabled || library.isSaving,
             onUpdatePlacement: (update) =>
               void editFixturePlacement(update),
             onUpdateDefinition: (update) =>

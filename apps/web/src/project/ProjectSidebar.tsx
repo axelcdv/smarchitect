@@ -19,6 +19,7 @@ interface ProjectSidebarProps {
   document: ProjectDocument;
   error: string;
   isSaving: boolean;
+  isEditingLocked: boolean;
   library: ItemLibraryController;
   onCreateProposal(): void;
   onDeleteProposal(): void;
@@ -39,6 +40,7 @@ export function ProjectSidebar({
   document,
   error,
   isSaving,
+  isEditingLocked,
   library,
   onCreateProposal,
   onDeleteProposal,
@@ -57,7 +59,7 @@ export function ProjectSidebar({
         <span>Rename project</span>
         <BufferedInput
           aria-label="Rename project"
-          disabled={isSaving}
+          disabled={isSaving || isEditingLocked}
           value={document.name}
           onCommit={onRenameProject}
         />
@@ -70,7 +72,7 @@ export function ProjectSidebar({
         <button
           type="button"
           className={activeProposal ? "proposal-option" : "proposal-option active"}
-          disabled={isSaving}
+          disabled={isSaving || isEditingLocked}
           onClick={onSelectExistingState}
         >
           <strong>Existing State</strong>
@@ -83,7 +85,7 @@ export function ProjectSidebar({
             className={activeProposal?.id === proposal.id
               ? "proposal-option active"
               : "proposal-option"}
-            disabled={isSaving}
+            disabled={isSaving || isEditingLocked}
             onClick={() => onSelectProposal(proposal.id)}
           >
             <strong>{proposal.name}</strong>
@@ -94,14 +96,14 @@ export function ProjectSidebar({
           <input
             aria-label="New Design Proposal name"
             value={proposalName}
-            disabled={isSaving}
+            disabled={isSaving || isEditingLocked}
             placeholder="Proposal name"
             onChange={(event) => onProposalNameChange(event.target.value)}
           />
           <button
             type="button"
             className="secondary-button"
-            disabled={isSaving || !proposalName.trim()}
+            disabled={isSaving || isEditingLocked || !proposalName.trim()}
             onClick={onCreateProposal}
           >
             Create from Existing State
@@ -113,7 +115,7 @@ export function ProjectSidebar({
               <span>Rename Design Proposal</span>
               <input
                 aria-label="Rename Design Proposal"
-                disabled={isSaving}
+                disabled={isSaving || isEditingLocked}
                 value={activeProposal.name}
                 onChange={(event) => onRenameProposal(event.target.value)}
               />
@@ -121,7 +123,7 @@ export function ProjectSidebar({
             <button
               type="button"
               className="danger-button"
-              disabled={isSaving}
+              disabled={isSaving || isEditingLocked}
               onClick={onDeleteProposal}
             >
               Delete Design Proposal
@@ -150,7 +152,7 @@ export function ProjectSidebar({
       </div>
       <ItemLibrary
         controller={library}
-        disabled={isSaving || library.isSaving}
+        disabled={isSaving || isEditingLocked || library.isSaving}
         onPlace={onPlaceItem}
       />
       <dl className="project-facts">

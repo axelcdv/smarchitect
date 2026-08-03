@@ -765,12 +765,12 @@ extensions: {}
     const result = parseProjectDocument(yaml);
 
     expect(result.document).toBeUndefined();
-    expect(result.diagnostics).toContainEqual({
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({
       code: "schema-version.unsupported",
       severity: "error",
       path: "/schemaVersion",
       message: `Unsupported schema version "99.0.0". Expected "${CURRENT_SCHEMA_VERSION}".`
-    });
+    }));
   });
 
   it("rejects malformed stable IDs and invalid Level dimensions", () => {
@@ -834,8 +834,41 @@ extensions: {}
     expect(aliasResult.diagnostics.map(({ code }) => code)).toContain(
       "yaml.restricted-syntax"
     );
+    expect(aliasResult.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "yaml.restricted-syntax",
+        path: "/activeLevelId",
+        line: 5,
+        column: expect.any(Number),
+        message: expect.stringMatching(/remove.*alias/i)
+      })
+    ]));
     expect(tagResult.diagnostics.map(({ code }) => code)).toContain(
       "yaml.restricted-syntax"
+    );
+  });
+
+  it("locates structural and semantic diagnostics in YAML source", () => {
+    const structural = parseProjectDocument(`schemaVersion: 1.0.0\nname: Missing fields\n`);
+    expect(structural.diagnostics[0]).toEqual(expect.objectContaining({
+      severity: "error",
+      line: expect.any(Number),
+      column: expect.any(Number)
+    }));
+
+    const workspace = ProjectWorkspace.create("Located semantic error");
+    const source = workspace.exportYaml().replace(
+      /^activeLevelId: .+$/m,
+      "activeLevelId: level_00000000-0000-4000-8000-000000000099"
+    );
+    expect(parseProjectDocument(source).diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          path: "/activeLevelId",
+          line: expect.any(Number),
+          column: expect.any(Number)
+        })
+      ])
     );
   });
 
