@@ -25,16 +25,16 @@ const VIEW: PlanCanvasView = {
   height: 5200
 };
 
-function planElement(): SVGSVGElement {
+function planElement(width = 800, height = 520): SVGSVGElement {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   Object.defineProperty(svg, "getBoundingClientRect", {
     value: () => ({
       left: 10,
       top: 20,
-      width: 800,
-      height: 520,
-      right: 810,
-      bottom: 540,
+      width,
+      height,
+      right: 10 + width,
+      bottom: 20 + height,
       x: 10,
       y: 20,
       toJSON: () => ({})
@@ -83,6 +83,30 @@ describe("plan gesture transformations", () => {
       x: -3000,
       y: 1600
     });
+  });
+
+  it("accounts for horizontal letterboxing when mapping pointer coordinates", () => {
+    const svg = planElement(1000, 520);
+
+    expect(clientPoint(svg, 210, 120, VIEW)).toEqual({
+      x: -3000,
+      y: 1600
+    });
+    const centre = clientPoint(svg, 510, 280, VIEW);
+    expect(centre.x).toBe(0);
+    expect(Math.abs(centre.y)).toBe(0);
+  });
+
+  it("accounts for vertical letterboxing when mapping pointer coordinates", () => {
+    const svg = planElement(800, 720);
+
+    expect(clientPoint(svg, 110, 220, VIEW)).toEqual({
+      x: -3000,
+      y: 1600
+    });
+    const centre = clientPoint(svg, 410, 380, VIEW);
+    expect(centre.x).toBe(0);
+    expect(Math.abs(centre.y)).toBe(0);
   });
 
   it("moves a placement by the pointer delta without mutating its source", () => {
