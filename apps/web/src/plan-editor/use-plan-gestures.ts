@@ -18,6 +18,7 @@ import {
   type WallUpdate
 } from "@smarchitect/core";
 import {
+  useRef,
   useState,
   type PointerEvent,
   type WheelEvent
@@ -154,6 +155,10 @@ export function usePlanGestures({
   const [view, setView] = useState<PlanCanvasView>(INITIAL_VIEW);
   const [gesture, setGesture] = useState<PlanGesture>();
   const [placingItem, setPlacingItem] = useState<PlacingItem>();
+  const capturedPointer = useRef<{
+    element: SVGElement;
+    pointerId: number;
+  } | undefined>(undefined);
   const activePlan = workspace?.activePlan;
   const activeLevel = workspace?.activeLevel;
   const walls = activeLevel?.walls ?? [];
@@ -203,6 +208,38 @@ export function usePlanGestures({
     );
   }
 
+  function capturePointer(event: PointerEvent<SVGElement>): void {
+    const element = event.currentTarget;
+    if (typeof element.setPointerCapture !== "function") return;
+    try {
+      element.setPointerCapture(event.pointerId);
+      capturedPointer.current = { element, pointerId: event.pointerId };
+    } catch {
+      // Pointer capture can fail if the pointer is no longer active.
+    }
+  }
+
+  function releasePointer(): void {
+    const captured = capturedPointer.current;
+    capturedPointer.current = undefined;
+    if (!captured || typeof captured.element.releasePointerCapture !== "function") {
+      return;
+    }
+    try {
+      captured.element.releasePointerCapture(captured.pointerId);
+    } catch {
+      // Pointer cancellation may already have released the capture.
+    }
+  }
+
+  function startPlanGesture(
+    event: PointerEvent<SVGSVGElement>,
+    nextGesture: PlanGesture
+  ): void {
+    capturePointer(event);
+    setGesture(nextGesture);
+  }
+
   async function beginPlanGesture(
     event: PointerEvent<SVGSVGElement>
   ): Promise<void> {
@@ -246,21 +283,25 @@ export function usePlanGestures({
       return;
     }
     if (mode === "draw") {
-      setGesture({
+      startPlanGesture(event, {
         kind: "draw",
         start: snapPoint(point, walls, snapTolerance)
       });
       return;
     }
     if (mode === "label") {
-      setGesture({ kind: "add-label" });
+      startPlanGesture(event, { kind: "add-label" });
       return;
     }
 
     const label = findRoomLabelAtPoint(point, roomLabels, view.width / 80);
     if (label) {
       selectRoomLabel(label.id);
-      setGesture({ kind: "move-label", labelId: label.id, start: point });
+      startPlanGesture(event, {
+        kind: "move-label",
+        labelId: label.id,
+        start: point
+      });
       return;
     }
 
@@ -271,7 +312,7 @@ export function usePlanGestures({
     );
     if (fixture) {
       selectFixture(fixture.id);
-      setGesture({
+      startPlanGesture(event, {
         kind: "fixtureMove",
         placementId: fixture.id,
         start: point
@@ -286,7 +327,7 @@ export function usePlanGestures({
     );
     if (furniture) {
       selectFurniture(furniture.id);
-      setGesture({
+      startPlanGesture(event, {
         kind: "furnitureMove",
         placementId: furniture.id,
         start: point
@@ -298,7 +339,7 @@ export function usePlanGestures({
       ? findWallEndpointAtPoint(point, [selectedWall], view.width / 160)
       : undefined;
     if (endpointHit) {
-      setGesture({
+      startPlanGesture(event, {
         kind: "endpoint",
         wallId: endpointHit.wallId,
         endpoint: endpointHit.endpoint
@@ -309,13 +350,18 @@ export function usePlanGestures({
     const wall = findWallAtPoint(point, walls, view.width / 400);
     selectWall(wall?.id);
     if (wall) {
-      setGesture({ kind: "move", wallId: wall.id, start: point });
+      startPlanGesture(event, {
+        kind: "move",
+        wallId: wall.id,
+        start: point
+      });
     }
   }
 
   async function finishPlanGesture(
     event: PointerEvent<SVGSVGElement>
   ): Promise<void> {
+    releasePointer();
     if (!workspace || !gesture || isTransitionPending()) return;
     const point = eventPoint(event);
     if (gesture.kind === "add-label") {
@@ -433,6 +479,11 @@ export function usePlanGestures({
   function previewPlanGesture(
     event: PointerEvent<SVGSVGElement>
   ): void {
+    if (gesture && (event.buttons & 1) === 0) {
+      releasePointer();
+      setGesture(undefined);
+      return;
+    }
     if (gesture?.kind === "draw") {
       setGesture({ ...gesture, current: eventPoint(event) });
       return;
@@ -462,6 +513,7 @@ export function usePlanGestures({
     event.stopPropagation();
     selectOpening(opening.id, opening.hostWallId);
     setMode("select");
+    capturePointer(event);
     setGesture({
       kind: "opening",
       openingId: opening.id,
@@ -476,6 +528,7 @@ export function usePlanGestures({
   }
 
   function resetInteraction(): void {
+    releasePointer();
     setGesture(undefined);
     setPlacingItem(undefined);
     setMode("select");
@@ -522,7 +575,10 @@ export function usePlanGestures({
     beginPlanGesture,
     previewPlanGesture,
     finishPlanGesture,
-    cancelPlanGesture: () => setGesture(undefined),
+    cancelPlanGesture: () => {
+      releasePointer();
+      setGesture(undefined);
+    },
     handleWheel,
     beginOpeningGesture
   };

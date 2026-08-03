@@ -46,9 +46,10 @@ function planElement(width = 800, height = 520): SVGSVGElement {
 function pointerEvent(
   currentTarget: SVGSVGElement,
   clientX: number,
-  clientY: number
+  clientY: number,
+  buttons = 1
 ): ReactPointerEvent<SVGSVGElement> {
-  return { currentTarget, clientX, clientY } as
+  return { currentTarget, clientX, clientY, buttons, pointerId: 7 } as
     ReactPointerEvent<SVGSVGElement>;
 }
 
@@ -206,6 +207,64 @@ describe("usePlanGestures", () => {
     expect(result.current.previewWorkspace).not.toBe(workspace);
     expect(result.current.previewWorkspace?.activeLevel.walls[0]!.path.start)
       .toEqual({ x: -2000, y: 500 });
+  });
+
+  it("ends an outside-released draw before the pointer re-enters", async () => {
+    const workspace = ProjectWorkspace.create("Outside release");
+    const svg = planElement();
+    const setPointerCapture = vi.fn();
+    const releasePointerCapture = vi.fn();
+    Object.assign(svg, { setPointerCapture, releasePointerCapture });
+    const { result } = renderHook(() => usePlanGestures(options(workspace)));
+
+    await act(async () => {
+      await result.current.beginPlanGesture(pointerEvent(svg, 110, 280));
+    });
+    act(() => {
+      result.current.previewPlanGesture(pointerEvent(svg, 410, 280));
+    });
+    expect(result.current.wallPreview).toBeDefined();
+    expect(setPointerCapture).toHaveBeenCalledWith(7);
+
+    await act(async () => {
+      await result.current.finishPlanGesture(pointerEvent(svg, 900, 280, 0));
+    });
+    expect(releasePointerCapture).toHaveBeenCalledWith(7);
+    expect(result.current.wallPreview).toBeUndefined();
+
+    act(() => {
+      result.current.previewPlanGesture(pointerEvent(svg, 410, 280, 0));
+    });
+    expect(result.current.wallPreview).toBeUndefined();
+  });
+
+  it("cancels a draw on re-entry when the primary button is up", async () => {
+    const workspace = ProjectWorkspace.create("Lost outside release");
+    const svg = planElement();
+    const releasePointerCapture = vi.fn();
+    Object.assign(svg, {
+      setPointerCapture: vi.fn(),
+      releasePointerCapture
+    });
+    const commit = vi.fn(async (next: ProjectWorkspace) => next);
+    const { result } = renderHook(() => usePlanGestures(options(workspace, {
+      commit
+    })));
+
+    await act(async () => {
+      await result.current.beginPlanGesture(pointerEvent(svg, 110, 280));
+    });
+    act(() => {
+      result.current.previewPlanGesture(pointerEvent(svg, 410, 280));
+    });
+    expect(result.current.wallPreview).toBeDefined();
+
+    act(() => {
+      result.current.previewPlanGesture(pointerEvent(svg, 410, 280, 0));
+    });
+    expect(result.current.wallPreview).toBeUndefined();
+    expect(releasePointerCapture).toHaveBeenCalledWith(7);
+    expect(commit).not.toHaveBeenCalled();
   });
 
   it("resets placement state and updates the viewport through public controls", () => {

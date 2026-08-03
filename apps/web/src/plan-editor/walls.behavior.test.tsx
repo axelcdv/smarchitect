@@ -31,7 +31,7 @@ describe("Walls", () => {
     const plan = screen.getByLabelText("Ground floor wall editor");
     setPlanBounds(plan);
     fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
-    fireEvent.pointerMove(plan, { clientX: 400, clientY: 260 });
+    fireEvent.pointerMove(plan, { clientX: 400, clientY: 260, buttons: 1 });
 
     expect(plan.querySelector(".wall-preview")).toHaveAttribute(
       "points",
@@ -117,7 +117,7 @@ describe("Walls", () => {
     const selectedWall = plan.querySelector(".selected-wall");
     const initialPoints = selectedWall?.getAttribute("points");
     fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
-    fireEvent.pointerMove(plan, { clientX: 252, clientY: 260 });
+    fireEvent.pointerMove(plan, { clientX: 252, clientY: 260, buttons: 1 });
     fireEvent.pointerUp(plan, { clientX: 252, clientY: 260 });
     expect(plan.querySelector(".selected-wall")).toHaveAttribute(
       "points",
@@ -125,10 +125,10 @@ describe("Walls", () => {
     );
 
     fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
-    fireEvent.pointerMove(plan, { clientX: 350, clientY: 210 });
+    fireEvent.pointerMove(plan, { clientX: 350, clientY: 210, buttons: 1 });
     expect(plan.querySelector(".selected-wall")?.getAttribute("points"))
       .not.toBe(initialPoints);
-    fireEvent.pointerMove(plan, { clientX: 250, clientY: 260 });
+    fireEvent.pointerMove(plan, { clientX: 250, clientY: 260, buttons: 1 });
     expect(plan.querySelector(".selected-wall")).toHaveAttribute(
       "points",
       initialPoints
@@ -138,7 +138,7 @@ describe("Walls", () => {
       .toHaveValue(-3000));
 
     fireEvent.pointerDown(plan, { clientX: 250, clientY: 260 });
-    fireEvent.pointerMove(plan, { clientX: 350, clientY: 210 });
+    fireEvent.pointerMove(plan, { clientX: 350, clientY: 210, buttons: 1 });
     fireEvent.pointerUp(plan, { clientX: 350, clientY: 210 });
     await waitFor(() => expect(screen.getByLabelText("Start X (mm)"))
       .toHaveValue(-2000));
