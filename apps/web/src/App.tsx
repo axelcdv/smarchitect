@@ -1,13 +1,10 @@
 import {
   deriveWallDragDelta,
-  deriveWallFaces,
-  deriveWallJunctions,
   exceedsWallDragThreshold,
   findRoomLabelAtPoint,
   distanceAlongWallPath,
   findWallAtPoint,
   findWallEndpointAtPoint,
-  furnitureFootprintCorners,
   furniturePlacementContainsPoint,
   ProjectValidationError,
   ProjectWorkspace,
@@ -17,32 +14,27 @@ import {
   type Opening,
   type OpeningUpdate,
   type PointMm,
-  type RoomLabel,
   type FixtureDefinitionUpdate,
   type FixturePlacementUpdate,
   type FurnitureDefinitionUpdate,
   type FurniturePlacementUpdate,
-  type Wall,
   type WallUpdate
 } from "@smarchitect/core";
 import {
   useRef,
   useState,
   type ChangeEvent,
-  type PointerEvent,
-  type WheelEvent
+  type PointerEvent
 } from "react";
 import { useAutosavedProject } from "./use-autosaved-project.js";
 import { useItemLibrary } from "./use-item-library.js";
-import {
-  createDefaultOpeningInput,
-  OpeningSymbol
-} from "./OpeningEditor.js";
+import { createDefaultOpeningInput } from "./OpeningEditor.js";
 import { ProjectDocumentPanel } from "./project/ProjectDocumentPanel.js";
 import { ProjectSidebar } from "./project/ProjectSidebar.js";
 import { WelcomeScreen } from "./project/WelcomeScreen.js";
 import { WorkspaceHeader } from "./project/WorkspaceHeader.js";
 import type { OpeningConflict } from "./plan-editor/OpeningConflictPanel.js";
+import { PlanCanvas } from "./plan-editor/PlanCanvas.js";
 import {
   SelectionInspector
 } from "./plan-editor/SelectionInspector.js";
@@ -52,12 +44,6 @@ import type {
 } from "./plan-editor/RoomLabelInspector.js";
 import type { WallEditField } from "./plan-editor/WallInspector.js";
 import "./styles.css";
-
-function wallPolygonPoints(wall: Wall): string {
-  return deriveWallFaces(wall)
-    .map(({ x, y }) => `${x},${-y}`)
-    .join(" ");
-}
 
 function moveWallForDrag(
   workspace: ProjectWorkspace,
@@ -161,9 +147,6 @@ export function App() {
     furniturePlacements,
     fixturePlacements
   });
-  const displayedSelectedWall = displayedWalls.find(
-    ({ id }) => id === selectedWall?.id
-  );
   const selectedFurnitureDefinition = activePlan?.furnitureDefinitions?.find(
     ({ id }) => id === selectedFurniture?.definitionId
   );
@@ -735,141 +718,42 @@ export function App() {
             <button type="button" aria-label="Pan up" onClick={() => setView((current) => ({ ...current, y: current.y - current.height / 10 }))}>↑</button>
             <button type="button" aria-label="Pan down" onClick={() => setView((current) => ({ ...current, y: current.y + current.height / 10 }))}>↓</button>
           </div>
-          <svg
-            className="wall-plan"
-            viewBox={`${view.x} ${view.y} ${view.width} ${view.height}`}
-            role="application"
-            aria-label={`${activeLevel.name} wall editor`}
+          <PlanCanvas
+            levelName={activeLevel.name}
+            view={view}
+            rooms={rooms}
+            walls={displayedWalls}
+            openings={openings}
+            roomLabels={roomLabels}
+            furnitureDefinitions={activePlan.furnitureDefinitions ?? []}
+            furniturePlacements={furniturePlacements}
+            fixtureDefinitions={activePlan.fixtureDefinitions ?? []}
+            fixturePlacements={fixturePlacements}
+            selection={selection}
             onPointerDown={(event) => void beginPlanGesture(event)}
             onPointerMove={previewPlanGesture}
             onPointerUp={(event) => void finishPlanGesture(event)}
             onPointerCancel={() => setGesture(undefined)}
-            onWheel={(event: WheelEvent<SVGSVGElement>) => {
+            onWheel={(event) => {
               event.preventDefault();
               const factor = event.deltaY > 0 ? 1.1 : .9;
               setView((current) => ({ ...current, width: current.width * factor, height: current.height * factor }));
             }}
-          >
-            <defs>
-              <pattern
-                id="grid"
-                width="500"
-                height="500"
-                patternUnits="userSpaceOnUse"
-              >
-                <path d="M 500 0 L 0 0 0 500" fill="none" />
-              </pattern>
-            </defs>
-            <rect x={view.x} y={view.y} width={view.width} height={view.height} fill="url(#grid)" />
-            {rooms.map((room) => (
-              <g key={room.id} className="derived-room">
-                <polygon points={room.boundary.map(({ x, y }) => `${x},${-y}`).join(" ")} />
-                <text
-                  x={room.boundary.reduce((sum, { x }) => sum + x, 0) / room.boundary.length}
-                  y={-room.boundary.reduce((sum, { y }) => sum + y, 0) / room.boundary.length}
-                >
-                  {(room.areaMm2 / 1_000_000).toFixed(2)} m² · {room.dimensionsMm.width} × {room.dimensionsMm.depth} mm
-                </text>
-              </g>
-            ))}
-            <path
-              className="wall-surface"
-              d={displayedWalls.map((wall) => {
-                const [first, ...rest] = deriveWallFaces(wall);
-                return first
-                  ? `M ${first.x} ${-first.y} ${rest.map(({ x, y }) => `L ${x} ${-y}`).join(" ")} Z`
-                  : "";
-              }).join(" ")}
-            />
-            {furniturePlacements.map((placement) => {
-              const definition = activePlan.furnitureDefinitions?.find(
-                ({ id }) => id === placement.definitionId
-              );
-              if (!definition) return null;
-              return (
-                <polygon
-                  key={placement.id}
-                  className={placement.id === selectedFurniture?.id
-                    ? "furniture-footprint selected-furniture"
-                    : "furniture-footprint"}
-                  points={furnitureFootprintCorners(definition, placement)
-                    .map(({ x, y }) => `${x},${-y}`)
-                    .join(" ")}
-                />
-              );
-            })}
-            {fixturePlacements.map((placement) => {
-              const definition = activePlan.fixtureDefinitions?.find(
-                ({ id }) => id === placement.definitionId
-              );
-              if (!definition) return null;
-              return (
-                <polygon
-                  key={placement.id}
-                  className={placement.id === selectedFixture?.id
-                    ? "fixture-footprint selected-fixture"
-                    : "fixture-footprint"}
-                  points={furnitureFootprintCorners(definition, placement)
-                    .map(({ x, y }) => `${x},${-y}`)
-                    .join(" ")}
-                />
-              );
-            })}
-            {displayedSelectedWall ? (
-              <polygon
-                className="selected-wall"
-                points={wallPolygonPoints(displayedSelectedWall)}
-              />
-            ) : null}
-            {openings.map((opening) => {
-              const host = displayedWalls.find(({ id }) => id === opening.hostWallId);
-              return host ? (
-                <OpeningSymbol
-                  key={opening.id}
-                  opening={opening}
-                  wall={host}
-                  selected={opening.id === selectedOpening?.id}
-                  onPointerDown={(event) => {
-                    if (isTransitionPending()) return;
-                    const svg = event.currentTarget.ownerSVGElement;
-                    if (!svg) return;
-                    event.stopPropagation();
-                    selectOpening(opening.id, opening.hostWallId);
-                    setMode("select");
-                    setGesture({
-                      kind: "opening",
-                      openingId: opening.id,
-                      start: clientPoint(svg, event.clientX, event.clientY),
-                      startPositionMm: opening.positionMm
-                    });
-                  }}
-                />
-              ) : null;
-            })}
-            {deriveWallJunctions(displayedWalls).map(({ point }) => (
-              <circle className="junction" key={`${point.x}:${point.y}`} cx={point.x} cy={-point.y} r={view.width / 220} />
-            ))}
-            {displayedSelectedWall ? (["start", "end"] as const).map((endpoint) => (
-              <circle
-                key={endpoint}
-                className="endpoint-handle"
-                cx={displayedSelectedWall.path[endpoint].x}
-                cy={-displayedSelectedWall.path[endpoint].y}
-                r={view.width / 160}
-              />
-            )) : null}
-            {roomLabels.map((label: RoomLabel) => (
-              <g
-                className={label.id === selectedRoomLabel?.id ? "room-label selected-room-label" : "room-label"}
-                key={label.id}
-              >
-                <circle cx={label.position.x} cy={-label.position.y} r={view.width / 100} />
-                <text x={label.position.x} y={-label.position.y - view.width / 70}>
-                  {label.name}
-                </text>
-              </g>
-            ))}
-          </svg>
+            onOpeningPointerDown={(event, opening) => {
+              if (isTransitionPending()) return;
+              const svg = event.currentTarget.ownerSVGElement;
+              if (!svg) return;
+              event.stopPropagation();
+              selectOpening(opening.id, opening.hostWallId);
+              setMode("select");
+              setGesture({
+                kind: "opening",
+                openingId: opening.id,
+                start: clientPoint(svg, event.clientX, event.clientY),
+                startPositionMm: opening.positionMm
+              });
+            }}
+          />
           <SelectionInspector
             selection={selection}
             wall={{
