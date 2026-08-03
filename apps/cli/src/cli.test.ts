@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { ProjectWorkspace } from "@smarchitect/core";
 import { describe, expect, it } from "vitest";
 import { runCli } from "./cli.js";
+import { parseOperationBatch } from "./operations.js";
 
 const validYaml = `schemaVersion: 1.1.0
 schemaDialect: https://json-schema.org/draft/2020-12/schema
@@ -513,6 +514,124 @@ describe("complete AI CLI workflow", () => {
       ok: false,
       diagnostics: [{ code: "operations.invalid" }]
     });
+  });
+
+  it("rejects misspelled nested operation fields instead of silently ignoring them", async () => {
+    const stderr = outputCollector();
+
+    const exitCode = await runCli(["apply", "project.yaml", "--operations", "-"], {
+      readFile: async () => validYaml,
+      readStdin: async () => JSON.stringify({
+        version: 1,
+        operations: [{
+          op: "wall.update",
+          id: "wall_00000000-0000-4000-8000-000000000003",
+          update: { heigthMm: 9999 }
+        }]
+      }),
+      stdout: () => undefined,
+      stderr: stderr.write
+    });
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stderr.values.join(""))).toMatchObject({
+      ok: false,
+      diagnostics: [{
+        code: "operations.invalid",
+        message: expect.stringContaining("update.heigthMm")
+      }]
+    });
+  });
+
+  it.each([
+    ["level.update", { op: "level.update", update: { naem: "Ground" } }, "update.naem"],
+    ["wall.add", {
+      op: "wall.add", id: "wall-1",
+      input: { start: { x: 0, y: 0 }, end: { x: 1, y: 0 }, heigthMm: 2500 }
+    }, "input.heigthMm"],
+    ["wall.update", { op: "wall.update", id: "wall-1", update: { heigthMm: 2500 } }, "update.heigthMm"],
+    ["wall.updateResolvingOpenings", {
+      op: "wall.updateResolvingOpenings", id: "wall-1",
+      update: { lenghtMm: 1000 }, resolution: "fit"
+    }, "update.lenghtMm"],
+    ["opening.add", {
+      op: "opening.add", id: "opening-1",
+      input: {
+        kind: "door", hostWallId: "wall-1", positionMm: 0, widthMm: 900,
+        heightMm: 2100,
+        operation: {
+          kind: "hinged", hingeSide: "start", swingDirection: "inward",
+          swingDireciton: "outward"
+        }
+      }
+    }, "input.operation.swingDireciton"],
+    ["opening.update", {
+      op: "opening.update", id: "opening-1",
+      update: {
+        operation: { kind: "sliding", slideDirection: "start", slideDireciton: "end" }
+      }
+    }, "update.operation.slideDireciton"],
+    ["roomLabel.add", {
+      op: "roomLabel.add", id: "label-1",
+      input: { name: "Kitchen", position: { x: 0, y: 0, yy: 1 } }
+    }, "input.position.yy"],
+    ["roomLabel.update", {
+      op: "roomLabel.update", id: "label-1",
+      update: { position: { x: 0, y: 0, yy: 1 } }
+    }, "update.position.yy"],
+    ["furniture.place definition", {
+      op: "furniture.place", id: "placement-1",
+      definition: {
+        id: "definition-1", name: "Desk", widthMm: 1200, depthMm: 700,
+        heightMm: 750, extensions: {}, widhtMm: 999
+      },
+      input: { position: { x: 0, y: 0 } }
+    }, "definition.widhtMm"],
+    ["furniture.place input", {
+      op: "furniture.place", id: "placement-1",
+      definition: {
+        id: "definition-1", name: "Desk", widthMm: 1200, depthMm: 700,
+        heightMm: 750, extensions: {}
+      },
+      input: { position: { x: 0, y: 0 }, rotaionDeg: 90 }
+    }, "input.rotaionDeg"],
+    ["furniture.updatePlacement", {
+      op: "furniture.updatePlacement", id: "placement-1",
+      update: { elevatonMm: 100 }
+    }, "update.elevatonMm"],
+    ["furniture.updateDefinition", {
+      op: "furniture.updateDefinition", id: "definition-1",
+      update: { dephtMm: 800 }
+    }, "update.dephtMm"],
+    ["fixture.place definition", {
+      op: "fixture.place", id: "placement-1",
+      definition: {
+        id: "definition-1", name: "Sink", widthMm: 800, depthMm: 500,
+        heightMm: 900, extensions: {}, widhtMm: 999
+      },
+      input: { position: { x: 0, y: 0 } }
+    }, "definition.widhtMm"],
+    ["fixture.place input", {
+      op: "fixture.place", id: "placement-1",
+      definition: {
+        id: "definition-1", name: "Sink", widthMm: 800, depthMm: 500,
+        heightMm: 900, extensions: {}
+      },
+      input: { position: { x: 0, y: 0 }, rotaionDeg: 90 }
+    }, "input.rotaionDeg"],
+    ["fixture.updatePlacement", {
+      op: "fixture.updatePlacement", id: "placement-1",
+      update: { elevatonMm: 100 }
+    }, "update.elevatonMm"],
+    ["fixture.updateDefinition", {
+      op: "fixture.updateDefinition", id: "definition-1",
+      update: { dephtMm: 800 }
+    }, "update.dephtMm"]
+  ])("validates the complete nested shape for %s", (_label, operation, path) => {
+    expect(() => parseOperationBatch(JSON.stringify({
+      version: 1,
+      operations: [operation]
+    }))).toThrow(expect.objectContaining({ message: expect.stringContaining(path) }));
   });
 
   it("previews migration without writing and performs it to an explicit file", async () => {

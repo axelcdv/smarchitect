@@ -97,10 +97,288 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+type ValueSchema =
+  | { type: "string" }
+  | { type: "number" }
+  | { type: "record" }
+  | { type: "literal"; values: readonly string[] }
+  | {
+      type: "object";
+      fields: Record<string, { schema: ValueSchema; optional?: boolean }>;
+    }
+  | {
+      type: "discriminated";
+      discriminator: string;
+      variants: Record<string, ValueSchema>;
+    };
+
+const stringSchema = { type: "string" } as const satisfies ValueSchema;
+const numberSchema = { type: "number" } as const satisfies ValueSchema;
+const recordSchema = { type: "record" } as const satisfies ValueSchema;
+
+function literalSchema(...values: string[]): ValueSchema {
+  return { type: "literal", values };
+}
+
+function objectSchema(
+  required: Record<string, ValueSchema>,
+  optional: Record<string, ValueSchema> = {}
+): ValueSchema {
+  return {
+    type: "object",
+    fields: Object.fromEntries([
+      ...Object.entries(required).map(([key, schema]) => [key, { schema }]),
+      ...Object.entries(optional).map(([key, schema]) => [
+        key,
+        { schema, optional: true }
+      ])
+    ])
+  };
+}
+
+const pointSchema = objectSchema({ x: numberSchema, y: numberSchema });
+const fixedOpeningOperationSchema = objectSchema({ kind: literalSchema("fixed") });
+const hingedOpeningOperationSchema = objectSchema({
+  kind: literalSchema("hinged"),
+  hingeSide: literalSchema("start", "end"),
+  swingDirection: literalSchema("inward", "outward")
+});
+const slidingOpeningOperationSchema = objectSchema({
+  kind: literalSchema("sliding"),
+  slideDirection: literalSchema("start", "end")
+});
+const doorOperationSchema: ValueSchema = {
+  type: "discriminated",
+  discriminator: "kind",
+  variants: {
+    hinged: hingedOpeningOperationSchema,
+    sliding: slidingOpeningOperationSchema
+  }
+};
+const openingOperationSchema: ValueSchema = {
+  type: "discriminated",
+  discriminator: "kind",
+  variants: {
+    fixed: fixedOpeningOperationSchema,
+    hinged: hingedOpeningOperationSchema,
+    sliding: slidingOpeningOperationSchema
+  }
+};
+const openingBaseFields = {
+  hostWallId: stringSchema,
+  positionMm: numberSchema,
+  widthMm: numberSchema,
+  heightMm: numberSchema
+};
+const openingInputSchema: ValueSchema = {
+  type: "discriminated",
+  discriminator: "kind",
+  variants: {
+    door: objectSchema({
+      kind: literalSchema("door"),
+      ...openingBaseFields,
+      operation: doorOperationSchema
+    }),
+    window: objectSchema({
+      kind: literalSchema("window"),
+      ...openingBaseFields,
+      sillHeightMm: numberSchema,
+      operation: openingOperationSchema
+    }),
+    passage: objectSchema({
+      kind: literalSchema("passage"),
+      ...openingBaseFields
+    })
+  }
+};
+const definitionSchema = objectSchema({
+  id: stringSchema,
+  name: stringSchema,
+  widthMm: numberSchema,
+  depthMm: numberSchema,
+  heightMm: numberSchema,
+  extensions: recordSchema
+});
+const definitionUpdateSchema = objectSchema({}, {
+  name: stringSchema,
+  widthMm: numberSchema,
+  depthMm: numberSchema,
+  heightMm: numberSchema
+});
+const placementInputSchema = objectSchema({ position: pointSchema }, {
+  rotationDeg: numberSchema,
+  elevationMm: numberSchema
+});
+const placementUpdateSchema = objectSchema({}, {
+  position: pointSchema,
+  rotationDeg: numberSchema,
+  elevationMm: numberSchema
+});
+
+const OPERATION_FIELD_SCHEMAS: Record<
+  ProjectOperation["op"],
+  Record<string, ValueSchema>
+> = {
+  "project.rename": { name: stringSchema },
+  "level.update": {
+    update: objectSchema({}, {
+      name: stringSchema,
+      baseElevationMm: numberSchema,
+      defaultWallHeightMm: numberSchema
+    })
+  },
+  "wall.add": {
+    id: stringSchema,
+    input: objectSchema({ start: pointSchema, end: pointSchema }, {
+      thicknessMm: numberSchema,
+      heightMm: numberSchema
+    })
+  },
+  "wall.update": {
+    id: stringSchema,
+    update: objectSchema({}, {
+      start: pointSchema,
+      end: pointSchema,
+      lengthMm: numberSchema,
+      angleDeg: numberSchema,
+      thicknessMm: numberSchema,
+      heightMm: numberSchema
+    })
+  },
+  "wall.updateResolvingOpenings": {
+    id: stringSchema,
+    update: objectSchema({}, {
+      start: pointSchema,
+      end: pointSchema,
+      lengthMm: numberSchema,
+      angleDeg: numberSchema,
+      thicknessMm: numberSchema,
+      heightMm: numberSchema
+    }),
+    resolution: literalSchema("fit", "delete")
+  },
+  "wall.delete": { id: stringSchema },
+  "opening.add": { id: stringSchema, input: openingInputSchema },
+  "opening.update": {
+    id: stringSchema,
+    update: objectSchema({}, {
+      hostWallId: stringSchema,
+      positionMm: numberSchema,
+      widthMm: numberSchema,
+      heightMm: numberSchema,
+      sillHeightMm: numberSchema,
+      operation: openingOperationSchema
+    })
+  },
+  "opening.delete": { id: stringSchema },
+  "roomLabel.add": {
+    id: stringSchema,
+    input: objectSchema({ name: stringSchema, position: pointSchema })
+  },
+  "roomLabel.update": {
+    id: stringSchema,
+    update: objectSchema({}, { name: stringSchema, position: pointSchema })
+  },
+  "roomLabel.delete": { id: stringSchema },
+  "furniture.place": {
+    id: stringSchema,
+    definition: definitionSchema,
+    input: placementInputSchema
+  },
+  "furniture.updatePlacement": { id: stringSchema, update: placementUpdateSchema },
+  "furniture.updateDefinition": { id: stringSchema, update: definitionUpdateSchema },
+  "furniture.deletePlacement": { id: stringSchema },
+  "furniture.makePlacementUnique": { id: stringSchema, newDefinitionId: stringSchema },
+  "fixture.place": {
+    id: stringSchema,
+    definition: definitionSchema,
+    input: placementInputSchema
+  },
+  "fixture.updatePlacement": { id: stringSchema, update: placementUpdateSchema },
+  "fixture.updateDefinition": { id: stringSchema, update: definitionUpdateSchema },
+  "fixture.deletePlacement": { id: stringSchema },
+  "fixture.makePlacementUnique": { id: stringSchema, newDefinitionId: stringSchema },
+  "proposal.create": { id: stringSchema, name: stringSchema },
+  "proposal.rename": { id: stringSchema, name: stringSchema },
+  "proposal.select": { id: stringSchema },
+  "proposal.delete": { id: stringSchema },
+  "existingState.select": {}
+};
+
 export class OperationBatchFormatError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "OperationBatchFormatError";
+  }
+}
+
+function invalidOperationField(index: number, path: string, detail: string): never {
+  throw new OperationBatchFormatError(
+    `Operation ${index} field "${path}" ${detail}.`
+  );
+}
+
+function validateValue(
+  value: unknown,
+  schema: ValueSchema,
+  index: number,
+  path: string
+): void {
+  if (schema.type === "string" || schema.type === "number") {
+    if (typeof value !== schema.type) {
+      invalidOperationField(index, path, `must be a ${schema.type}`);
+    }
+    return;
+  }
+  if (schema.type === "record") {
+    if (!isRecord(value)) invalidOperationField(index, path, "must be an object");
+    return;
+  }
+  if (schema.type === "literal") {
+    if (typeof value !== "string" || !schema.values.includes(value)) {
+      invalidOperationField(
+        index,
+        path,
+        `must be one of: ${schema.values.join(", ")}`
+      );
+    }
+    return;
+  }
+  if (!isRecord(value)) invalidOperationField(index, path, "must be an object");
+  if (schema.type === "discriminated") {
+    const discriminator = value[schema.discriminator];
+    if (
+      typeof discriminator !== "string"
+      || !Object.hasOwn(schema.variants, discriminator)
+    ) {
+      invalidOperationField(
+        index,
+        `${path}.${schema.discriminator}`,
+        `must be one of: ${Object.keys(schema.variants).join(", ")}`
+      );
+    }
+    validateValue(value, schema.variants[discriminator]!, index, path);
+    return;
+  }
+
+  const unsupported = Object.keys(value).filter(
+    (key) => !Object.hasOwn(schema.fields, key)
+  );
+  if (unsupported.length) {
+    invalidOperationField(
+      index,
+      `${path}.${unsupported[0]}`,
+      "is unsupported"
+    );
+  }
+  const missing = Object.entries(schema.fields)
+    .filter(([key, definition]) => !definition.optional && !(key in value))
+    .map(([key]) => key);
+  if (missing.length) {
+    invalidOperationField(index, `${path}.${missing[0]}`, "is required");
+  }
+  for (const [key, nestedValue] of Object.entries(value)) {
+    validateValue(nestedValue, schema.fields[key]!.schema, index, `${path}.${key}`);
   }
 }
 
@@ -311,6 +589,10 @@ function validateOperationShape(
   }
   if ("id" in operation && typeof operation.id !== "string") {
     throw new OperationBatchFormatError(`Operation ${index} ID must be a string.`);
+  }
+  const schemas = OPERATION_FIELD_SCHEMAS[operation.op];
+  for (const field of fields) {
+    validateValue(operation[field], schemas[field]!, index, field);
   }
 }
 
