@@ -87,7 +87,7 @@ export function WorkspaceShell({
         <ProjectSidebar
           activeLevel={workspace.activeLevel}
           activeProposal={activeProposal}
-          diagnostics={workspace.activeDiagnostics}
+          diagnostics={workspace.diagnostics}
           document={workspace.document}
           error={error}
           isSaving={isSaving}

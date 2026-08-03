@@ -607,6 +607,39 @@ export class ProjectWorkspace {
     return this.#acceptCandidate(candidate);
   }
 
+  navigateToDiagnostic(diagnostic: Diagnostic): ProjectWorkspace {
+    const proposalMatch = diagnostic.path.match(
+      /^\/designProposals\/(\d+)\/levels\/(\d+)(?:\/|$)/
+    );
+    const existingStateMatch = diagnostic.path.match(/^\/levels\/(\d+)(?:\/|$)/);
+    const candidate = cloneProjectDocument(this.#document);
+    let plan: PlanSnapshot;
+    let levelIndex: number;
+
+    if (proposalMatch) {
+      const proposalIndex = Number(proposalMatch[1]);
+      levelIndex = Number(proposalMatch[2]);
+      const proposal = candidate.designProposals?.[proposalIndex];
+      if (!proposal) throw new Error("The diagnostic Design Proposal is missing.");
+      candidate.activePlan = {
+        kind: "design-proposal",
+        proposalId: proposal.id
+      };
+      plan = proposal;
+    } else if (existingStateMatch) {
+      levelIndex = Number(existingStateMatch[1]);
+      candidate.activePlan = { kind: "existing-state" };
+      plan = candidate;
+    } else {
+      throw new Error("The diagnostic does not identify a Plan Level.");
+    }
+
+    const level = plan.levels[levelIndex];
+    if (!level) throw new Error("The diagnostic Level is missing.");
+    plan.activeLevelId = level.id;
+    return this.#acceptCandidate(candidate);
+  }
+
   deleteDesignProposal(id: string): ProjectWorkspace {
     const candidate = cloneProjectDocument(this.#document);
     const proposals = candidate.designProposals ?? [];

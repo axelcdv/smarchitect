@@ -3,8 +3,10 @@ import {
   ProjectWorkspace,
   type EntityKind,
   type FurnitureDefinition,
-  type IdFactory
+  type IdFactory,
+  type Level
 } from "./index.js";
+import { designDiagnostics } from "./design-diagnostics.js";
 
 function ids(): IdFactory {
   let sequence = 0;
@@ -94,6 +96,110 @@ describe("advisory design diagnostics", () => {
     expect(() => ProjectWorkspace.importYaml(workspace.exportYaml())).not.toThrow();
   });
 
+  it("reports non-host Walls that block a Door clearance footprint", () => {
+    let workspace = ProjectWorkspace.create("Wall-blocked Door", { idFactory: ids() })
+      .addWall({ start: { x: 0, y: 0 }, end: { x: 4000, y: 0 } });
+    const hostWallId = workspace.activeLevel.walls[0]!.id;
+    workspace = workspace
+      .addWall({ start: { x: 0, y: 500 }, end: { x: 4000, y: 500 } })
+      .addWall({ start: { x: 0, y: -500 }, end: { x: 4000, y: -500 } })
+      .addOpening({
+        kind: "door",
+        hostWallId,
+        positionMm: 1000,
+        widthMm: 900,
+        heightMm: 2100,
+        operation: {
+          kind: "hinged",
+          hingeSide: "start",
+          swingDirection: "inward"
+        }
+      });
+    const door = workspace.activeLevel.openings[0]!;
+    const blockingWallIds = workspace.activeLevel.walls.slice(1).map(({ id }) => id);
+
+    expect(workspace.diagnostics.filter(({ code }) => code === "door.obstructed"))
+      .toEqual(blockingWallIds.map((wallId) => expect.objectContaining({
+        affectedIds: [door.id, wallId]
+      })));
+  });
+
+  it("does not report a Door obstructed by a Placement entirely below the floor", () => {
+    let workspace = ProjectWorkspace.create("Below-floor table", { idFactory: ids() })
+      .addWall({ start: { x: 0, y: 0 }, end: { x: 4000, y: 0 } });
+    workspace = workspace.addOpening({
+      kind: "door",
+      hostWallId: workspace.activeLevel.walls[0]!.id,
+      positionMm: 1000,
+      widthMm: 900,
+      heightMm: 2100,
+      operation: {
+        kind: "hinged",
+        hingeSide: "start",
+        swingDirection: "inward"
+      }
+    }).placeFurniture(table, {
+      position: { x: 1450, y: 500 },
+      elevationMm: -1000
+    });
+
+    expect(workspace.diagnostics).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "door.obstructed" })
+    ]));
+  });
+
+  it("bounds overlap diagnostics across the documented 500/500/2,000 fixture", () => {
+    const walls = Array.from({ length: 500 }, (_, index) => ({
+      id: `wall_${String(index).padStart(4, "0")}`,
+      path: {
+        start: { x: 100_000 + index * 10_000, y: 0 },
+        end: { x: 104_000 + index * 10_000, y: 0 }
+      },
+      thicknessMm: 100,
+      heightMm: 2500,
+      extensions: {}
+    }));
+    const level: Level = {
+      id: "level_fixture",
+      name: "Performance fixture",
+      baseElevationMm: 0,
+      defaultWallHeightMm: 2500,
+      walls,
+      openings: walls.map((wall, index) => ({
+        id: `opening_${String(index).padStart(4, "0")}`,
+        kind: "window" as const,
+        hostWallId: wall.id,
+        positionMm: 1000,
+        widthMm: 900,
+        heightMm: 1200,
+        sillHeightMm: 900,
+        extensions: {}
+      })),
+      roomLabels: [],
+      furniturePlacements: Array.from({ length: 2000 }, (_, index) => ({
+        id: `placement_${String(index).padStart(4, "0")}`,
+        definitionId: table.id,
+        position: { x: 0, y: 0 },
+        rotationDeg: 0,
+        elevationMm: 0,
+        extensions: {}
+      })),
+      fixturePlacements: [],
+      extensions: {}
+    };
+    const startedAt = performance.now();
+    const diagnostics = designDiagnostics(level, [table], [], {
+      pathPrefix: "",
+      levelIndex: 0
+    });
+    const elapsedMs = performance.now() - startedAt;
+    const overlaps = diagnostics.filter(({ code }) => code === "placement.overlap");
+
+    expect(overlaps).toHaveLength(1);
+    expect(overlaps[0]!.affectedIds).toHaveLength(2000);
+    expect(elapsedMs).toBeLessThan(250);
+  });
+
   it("warns about a likely open enclosure without making edits invalid", () => {
     const workspace = ProjectWorkspace.create("Open room", { idFactory: ids() })
       .addWall({ start: { x: 0, y: 0 }, end: { x: 3000, y: 0 } })
@@ -130,7 +236,7 @@ describe("advisory design diagnostics", () => {
     }));
   });
 
-  it("traverses inactive Plans for machine diagnostics while scoping GUI diagnostics", () => {
+  it("navigates project-wide diagnostics to their Plan, Level, and stable entity", () => {
     let workspace = ProjectWorkspace.create("All plans", { idFactory: ids() })
       .addRoomLabel({ name: "Proposal-only warning", position: { x: 100, y: 100 } })
       .createDesignProposal("Alternative");
@@ -141,8 +247,16 @@ describe("advisory design diagnostics", () => {
       code: "room-label.outside-room",
       path: "/designProposals/0/levels/0/roomLabels/0/position"
     }));
-    expect(workspace.activeDiagnostics).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "room-label.outside-room" })
-    ]));
+    const diagnostic = workspace.diagnostics.find(
+      ({ code }) => code === "room-label.outside-room"
+    )!;
+    const focused = workspace.navigateToDiagnostic(diagnostic);
+
+    expect(focused.activePlanSelection).toEqual({
+      kind: "design-proposal",
+      proposalId: focused.document.designProposals![0]!.id
+    });
+    expect(focused.activeLevel.id).toBe(focused.activeDesignProposal!.levels[0]!.id);
+    expect(focused.activeDiagnostics).toContainEqual(diagnostic);
   });
 });

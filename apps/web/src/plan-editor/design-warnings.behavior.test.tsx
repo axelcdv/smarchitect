@@ -48,4 +48,23 @@ describe("Design warnings", () => {
     expect(screen.getByRole("heading", { name: "Warning table" }))
       .toBeInTheDocument();
   });
+
+  it("shows project-wide warnings and navigates Focus to an inactive proposal", async () => {
+    let workspace = ProjectWorkspace.create("Project warnings", { idFactory: ids() })
+      .addRoomLabel({ name: "Proposal warning", position: { x: 100, y: 100 } })
+      .createDesignProposal("Alternative");
+    const labelId = workspace.activeLevel.roomLabels[0]!.id;
+    workspace = workspace.selectExistingState().deleteRoomLabel(labelId);
+
+    render(<PlanEditorTestHarness initialWorkspace={workspace} />);
+
+    expect(screen.getByText("room-label.outside-room")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Focus warning room-label.outside-room"
+    }));
+    expect(await screen.findByRole("textbox", { name: "Room Label name" }))
+      .toHaveValue("Proposal warning");
+    expect(screen.getByLabelText("Selected Room Label properties"))
+      .toBeInTheDocument();
+  });
 });

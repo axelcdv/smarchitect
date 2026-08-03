@@ -118,6 +118,66 @@ function placementGeometries(items: readonly PlacedItem[]): PlacementGeometry[] 
   });
 }
 
+const PLACEMENT_SPATIAL_CELL_MM = 1000;
+
+function spatialCellKeys(bounds: Bounds): string[] {
+  const minColumn = Math.floor(bounds.minX / PLACEMENT_SPATIAL_CELL_MM);
+  const maxColumn = Math.floor(
+    (bounds.maxX - Number.EPSILON) / PLACEMENT_SPATIAL_CELL_MM
+  );
+  const minRow = Math.floor(bounds.minY / PLACEMENT_SPATIAL_CELL_MM);
+  const maxRow = Math.floor(
+    (bounds.maxY - Number.EPSILON) / PLACEMENT_SPATIAL_CELL_MM
+  );
+  const keys: string[] = [];
+  for (let column = minColumn; column <= maxColumn; column += 1) {
+    for (let row = minRow; row <= maxRow; row += 1) {
+      keys.push(`${column}:${row}`);
+    }
+  }
+  return keys;
+}
+
+function overlappingPlacementIds(
+  items: readonly PlacementGeometry[]
+): { affectedIds: string[]; focusItem?: PlacementGeometry } {
+  const cells = new Map<string, PlacementGeometry[]>();
+  const affected = new Set<string>();
+  let focusItem: PlacementGeometry | undefined;
+
+  for (const item of items) {
+    const keys = spatialCellKeys(item.bounds);
+    const candidates = new Set<PlacementGeometry>();
+    for (const key of keys) {
+      for (const candidate of cells.get(key) ?? []) candidates.add(candidate);
+    }
+    for (const candidate of candidates) {
+      if (!boundsOverlap(candidate.bounds, item.bounds)) continue;
+      const candidateTop = candidate.placement.elevationMm
+        + candidate.definition.heightMm;
+      const itemTop = item.placement.elevationMm + item.definition.heightMm;
+      if (
+        candidateTop <= item.placement.elevationMm
+        || itemTop <= candidate.placement.elevationMm
+      ) continue;
+      if (!polygonsOverlap(candidate.footprint, item.footprint)) continue;
+      affected.add(candidate.placement.id);
+      affected.add(item.placement.id);
+      focusItem ??= candidate;
+      // One confirmed neighbor is enough to retain this Placement in the
+      // aggregated warning; avoid enumerating a potentially quadratic pair set.
+      break;
+    }
+    for (const key of keys) {
+      const occupants = cells.get(key);
+      if (occupants) occupants.push(item);
+      else cells.set(key, [item]);
+    }
+  }
+
+  return { affectedIds: [...affected], focusItem };
+}
+
 function wallGeometries(level: Level): WallGeometry[] {
   return level.walls.map((wall, index) => {
     const footprint = deriveWallFaces(wall);
@@ -201,7 +261,6 @@ export function designDiagnostics(
   const items = placementGeometries(
     allPlacedItems(level, furnitureDefinitions, fixtureDefinitions)
   );
-  const sortedItems = [...items].sort(byMinimumX);
   const walls = wallGeometries(level);
   const rooms = deriveRooms(level.walls, level.roomLabels);
 
@@ -250,25 +309,19 @@ export function designDiagnostics(
     }
   }
 
-  for (let firstIndex = 0; firstIndex < sortedItems.length; firstIndex += 1) {
-    const first = sortedItems[firstIndex]!;
-    for (let secondIndex = firstIndex + 1; secondIndex < sortedItems.length; secondIndex += 1) {
-      const second = sortedItems[secondIndex]!;
-      if (second.bounds.minX >= first.bounds.maxX) break;
-      if (!boundsOverlap(first.bounds, second.bounds)) continue;
-      const firstTop = first.placement.elevationMm + first.definition.heightMm;
-      const secondTop = second.placement.elevationMm + second.definition.heightMm;
-      if (firstTop <= second.placement.elevationMm || secondTop <= first.placement.elevationMm) continue;
-      if (!polygonsOverlap(first.footprint, second.footprint)) continue;
-      diagnostics.push({
-        code: "placement.overlap",
-        severity: "warning",
-        path: `${levelPath}/${first.path}/position`,
-        message: `Placements "${first.placement.id}" and "${second.placement.id}" overlap. This is advisory and does not block exploration.`,
-        affectedIds: [first.placement.id, second.placement.id],
-        focus: { kind: first.kind, id: first.placement.id }
-      });
-    }
+  const placementOverlaps = overlappingPlacementIds(items);
+  if (placementOverlaps.focusItem) {
+    diagnostics.push({
+      code: "placement.overlap",
+      severity: "warning",
+      path: `${levelPath}/${placementOverlaps.focusItem.path}/position`,
+      message: `${placementOverlaps.affectedIds.length} Placements overlap one or more other Placements. This aggregated warning is advisory and does not block exploration.`,
+      affectedIds: placementOverlaps.affectedIds,
+      focus: {
+        kind: placementOverlaps.focusItem.kind,
+        id: placementOverlaps.focusItem.placement.id
+      }
+    });
   }
 
   for (const [openingIndex, opening] of level.openings.entries()) {
@@ -276,7 +329,7 @@ export function designDiagnostics(
     const clearance = doorClearanceFootprint(level, openingIndex);
     const clearanceBounds = polygonBounds(clearance);
     const blocking = items.filter((item) =>
-      item.placement.elevationMm < opening.heightMm
+      verticalRangesOverlap(item, opening.heightMm)
       && boundsOverlap(clearanceBounds, item.bounds)
       && polygonsOverlap(clearance, item.footprint)
     );
@@ -287,6 +340,20 @@ export function designDiagnostics(
         path: `${levelPath}/openings/${openingIndex}`,
         message: `Door "${opening.id}" may be inaccessible or obstructed by Placement "${item.placement.id}". Review access and swing clearance.`,
         affectedIds: [opening.id, item.placement.id],
+        focus: { kind: "opening", id: opening.id }
+      });
+    }
+    for (const wallGeometry of walls) {
+      const wall = level.walls[wallGeometry.index]!;
+      if (wall.id === opening.hostWallId) continue;
+      if (!boundsOverlap(clearanceBounds, wallGeometry.bounds)) continue;
+      if (!polygonsOverlap(clearance, wallGeometry.footprint)) continue;
+      diagnostics.push({
+        code: "door.obstructed",
+        severity: "warning",
+        path: `${levelPath}/openings/${openingIndex}`,
+        message: `Door "${opening.id}" may be inaccessible or obstructed by Wall "${wall.id}". Review access and swing clearance.`,
+        affectedIds: [opening.id, wall.id],
         focus: { kind: "opening", id: opening.id }
       });
     }

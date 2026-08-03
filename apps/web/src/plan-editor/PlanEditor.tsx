@@ -60,9 +60,11 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
     const [openingConflict, setOpeningConflict] = useState<OpeningConflict>();
     const activePlan = workspace.activePlan;
     const activeLevel = workspace.activeLevel;
-    const diagnostics = workspace.activeDiagnostics;
+    const diagnostics = workspace.diagnostics;
     const warnings = diagnostics.filter(({ severity }) => severity === "warning");
-    const warningIds = new Set(warnings.flatMap(({ affectedIds }) => affectedIds ?? []));
+    const warningIds = new Set(workspace.activeDiagnostics
+      .filter(({ severity }) => severity === "warning")
+      .flatMap(({ affectedIds }) => affectedIds ?? []));
     const walls = activeLevel.walls;
     const roomLabels = activeLevel.roomLabels;
     const openings = activeLevel.openings;
@@ -139,15 +141,25 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
       resetInteraction();
     }
 
-    function focusWarning(diagnostic: Diagnostic): void {
+    async function focusWarning(diagnostic: Diagnostic): Promise<void> {
       const focus = diagnostic.focus;
       if (!focus) return;
+      let focusedWorkspace = workspace;
+      if (!workspace.activeDiagnostics.some(
+        ({ code, path }) => code === diagnostic.code && path === diagnostic.path
+      )) {
+        const durable = await onCommit(workspace.navigateToDiagnostic(diagnostic));
+        if (!durable) return;
+        focusedWorkspace = durable;
+      }
       switch (focus.kind) {
         case "wall":
           selectWall(focus.id);
           break;
         case "opening": {
-          const opening = openings.find(({ id }) => id === focus.id);
+          const opening = focusedWorkspace.activeLevel.openings.find(
+            ({ id }) => id === focus.id
+          );
           if (opening) selectOpening(opening.id, opening.hostWallId);
           break;
         }
@@ -383,7 +395,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
                       type="button"
                       className="secondary-button"
                       aria-label={`Focus warning ${warning.code}`}
-                      onClick={() => focusWarning(warning)}
+                      onClick={() => void focusWarning(warning)}
                     >
                       Focus in plan
                     </button>
