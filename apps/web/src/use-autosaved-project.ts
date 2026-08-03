@@ -23,6 +23,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
   const transitionPending = useRef(false);
   const activeYamlRef = useRef("");
   const yamlDraftRef = useRef<string | undefined>(undefined);
+  const yamlDraftRevisionRef = useRef(0);
   const [workspace, setWorkspace] = useState<ProjectWorkspace>();
   const [yaml, setYaml] = useState("");
   const [yamlDiagnostics, setYamlDiagnostics] = useState<Diagnostic[]>([]);
@@ -41,10 +42,10 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     });
   }
 
-  function show(next: ProjectWorkspace): void {
-    const activeYaml = next.exportYaml();
+  function syncActiveWorkspace(nextWorkspace: ProjectWorkspace): void {
+    const activeYaml = nextWorkspace.exportYaml();
     activeYamlRef.current = activeYaml;
-    setWorkspace(next);
+    setWorkspace(nextWorkspace);
     if (yamlDraftRef.current === undefined) setYaml(activeYaml);
     setPersistenceError("");
   }
@@ -65,7 +66,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
         setYamlDiagnostics(yamlDraftRef.current === undefined
           ? []
           : parseProjectDocument(yamlDraftRef.current).diagnostics);
-        show(restored.workspace);
+        syncActiveWorkspace(restored.workspace);
         refreshHistoryControls(restored);
       })
       .catch(() => {
@@ -88,7 +89,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     setIsSaving(true);
     try {
       const durable = await transition();
-      show(durable);
+      syncActiveWorkspace(durable);
       return durable;
     } catch (cause) {
       setPersistenceError(cause instanceof Error
@@ -137,6 +138,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
   function editYaml(next: string): void {
     const project = projectRef.current;
     const draft = next === activeYamlRef.current ? undefined : next;
+    yamlDraftRevisionRef.current += 1;
     yamlDraftRef.current = draft;
     setYaml(next);
     setHasYamlDraft(draft !== undefined);
@@ -156,6 +158,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     const project = projectRef.current;
     const draft = yamlDraftRef.current;
     if (!project || draft === undefined) return undefined;
+    const draftRevision = yamlDraftRevisionRef.current;
     const parsed = parseProjectDocument(draft);
     setYamlDiagnostics(parsed.diagnostics);
     if (!parsed.document || parsed.diagnostics.length) return undefined;
@@ -163,12 +166,14 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     const imported = ProjectWorkspace.importYaml(draft);
     const durable = await persist(() => project.acceptDraft(imported));
     if (!durable) return undefined;
-    yamlDraftRef.current = undefined;
-    setHasYamlDraft(false);
-    setYamlDiagnostics([]);
-    const activeYaml = durable.exportYaml();
-    activeYamlRef.current = activeYaml;
-    setYaml(activeYaml);
+    if (yamlDraftRevisionRef.current === draftRevision) {
+      yamlDraftRef.current = undefined;
+      setHasYamlDraft(false);
+      setYamlDiagnostics([]);
+      const activeYaml = durable.exportYaml();
+      activeYamlRef.current = activeYaml;
+      setYaml(activeYaml);
+    }
     refreshHistoryControls(project);
     return durable;
   }
