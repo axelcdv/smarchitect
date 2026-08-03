@@ -1,4 +1,4 @@
-import type { ProjectWorkspace } from "@smarchitect/core";
+import type { Diagnostic, ProjectWorkspace } from "@smarchitect/core";
 import {
   useRef,
   useState,
@@ -20,16 +20,20 @@ export interface WorkspaceShellProps {
   error: string;
   operationError: string;
   isSaving: boolean;
+  hasYamlDraft: boolean;
   canUndo: boolean;
   canRedo: boolean;
   importInputRef: RefObject<HTMLInputElement | null>;
   library: ItemLibraryController;
   isTransitionPending(): boolean;
   onCommit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined>;
+  onApplyYaml(): void;
   onImport(event: ChangeEvent<HTMLInputElement>): void;
   onNavigateHistory(direction: "undo" | "redo"): Promise<boolean>;
   onOperationError(message: string): void;
   onRenameProject(value: string): void;
+  onYamlChange(value: string): void;
+  yamlDiagnostics: Diagnostic[];
 }
 
 export function WorkspaceShell({
@@ -38,16 +42,20 @@ export function WorkspaceShell({
   error,
   operationError,
   isSaving,
+  hasYamlDraft,
   canUndo,
   canRedo,
   importInputRef,
   library,
   isTransitionPending,
   onCommit,
+  onApplyYaml,
   onImport,
   onNavigateHistory,
   onOperationError,
-  onRenameProject
+  onRenameProject,
+  onYamlChange,
+  yamlDiagnostics
 }: WorkspaceShellProps) {
   const [proposalName, setProposalName] = useState("");
   const planEditor = useRef<PlanEditorHandle>(null);
@@ -65,6 +73,7 @@ export function WorkspaceShell({
         importInputRef={importInputRef}
         isDesignProposal={Boolean(activeProposal)}
         isSaving={isSaving}
+        isEditingLocked={hasYamlDraft}
         onImport={onImport}
         onNavigateHistory={(direction) => {
           void onNavigateHistory(direction).then((restored) => {
@@ -82,6 +91,7 @@ export function WorkspaceShell({
           document={workspace.document}
           error={error}
           isSaving={isSaving}
+          isEditingLocked={hasYamlDraft}
           library={library}
           onCreateProposal={() => {
             void changeActivePlan(
@@ -117,14 +127,22 @@ export function WorkspaceShell({
         <PlanEditor
           ref={planEditor}
           isSaving={isSaving}
-          isTransitionPending={isTransitionPending}
+          isReadOnly={hasYamlDraft}
+          isTransitionPending={() => hasYamlDraft || isTransitionPending()}
           library={library}
           operationError={operationError}
           workspace={workspace}
           onCommit={onCommit}
           onOperationError={onOperationError}
         />
-        <ProjectDocumentPanel yaml={yaml} />
+        <ProjectDocumentPanel
+          diagnostics={yamlDiagnostics}
+          hasDraft={hasYamlDraft}
+          isSaving={isSaving}
+          yaml={yaml}
+          onApply={onApplyYaml}
+          onChange={onYamlChange}
+        />
       </section>
     </main>
   );

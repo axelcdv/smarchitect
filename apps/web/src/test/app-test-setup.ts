@@ -11,15 +11,15 @@ import { afterEach, beforeEach, vi } from "vitest";
 import type { ProjectRepository } from "../project-persistence.js";
 
 export class FailableProjectRepository implements ProjectRepository {
-  snapshot?: ProjectHistorySnapshot;
+  snapshot?: ProjectHistorySnapshot & { draft?: string };
   failSaving = false;
   saveAttempts = 0;
 
-  async load(): Promise<ProjectHistorySnapshot | undefined> {
+  async load(): Promise<(ProjectHistorySnapshot & { draft?: string }) | undefined> {
     return this.snapshot ? structuredClone(this.snapshot) : undefined;
   }
 
-  async save(snapshot: ProjectHistorySnapshot): Promise<void> {
+  async save(snapshot: ProjectHistorySnapshot & { draft?: string }): Promise<void> {
     this.saveAttempts += 1;
     if (this.failSaving) throw new Error("storage unavailable");
     this.snapshot = structuredClone(snapshot);

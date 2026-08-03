@@ -1,4 +1,8 @@
-import { type ProjectWorkspace } from "@smarchitect/core";
+import {
+  parseProjectDocument,
+  ProjectWorkspace,
+  type Diagnostic
+} from "@smarchitect/core";
 import { useEffect, useRef, useState } from "react";
 import {
   AutosavedProject,
@@ -17,8 +21,13 @@ export function useAutosavedProject(repository?: ProjectRepository) {
 
   const projectRef = useRef<AutosavedProject | undefined>(undefined);
   const transitionPending = useRef(false);
+  const activeYamlRef = useRef("");
+  const yamlDraftRef = useRef<string | undefined>(undefined);
+  const yamlDraftRevisionRef = useRef(0);
   const [workspace, setWorkspace] = useState<ProjectWorkspace>();
   const [yaml, setYaml] = useState("");
+  const [yamlDiagnostics, setYamlDiagnostics] = useState<Diagnostic[]>([]);
+  const [hasYamlDraft, setHasYamlDraft] = useState(false);
   const [persistenceError, setPersistenceError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const [historyControls, setHistoryControls] = useState({
@@ -33,9 +42,11 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     });
   }
 
-  function show(next: ProjectWorkspace): void {
-    setWorkspace(next);
-    setYaml(next.exportYaml());
+  function syncActiveWorkspace(nextWorkspace: ProjectWorkspace): void {
+    const activeYaml = nextWorkspace.exportYaml();
+    activeYamlRef.current = activeYaml;
+    setWorkspace(nextWorkspace);
+    if (yamlDraftRef.current === undefined) setYaml(activeYaml);
     setPersistenceError("");
   }
 
@@ -45,7 +56,17 @@ export function useAutosavedProject(repository?: ProjectRepository) {
       .then((restored) => {
         if (!active || !restored || projectRef.current) return;
         projectRef.current = restored;
-        show(restored.workspace);
+        const activeYaml = restored.workspace.exportYaml();
+        activeYamlRef.current = activeYaml;
+        yamlDraftRef.current = restored.draft === activeYaml
+          ? undefined
+          : restored.draft;
+        setHasYamlDraft(yamlDraftRef.current !== undefined);
+        setYaml(yamlDraftRef.current ?? activeYaml);
+        setYamlDiagnostics(yamlDraftRef.current === undefined
+          ? []
+          : parseProjectDocument(yamlDraftRef.current).diagnostics);
+        syncActiveWorkspace(restored.workspace);
         refreshHistoryControls(restored);
       })
       .catch(() => {
@@ -68,7 +89,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     setIsSaving(true);
     try {
       const durable = await transition();
-      show(durable);
+      syncActiveWorkspace(durable);
       return durable;
     } catch (cause) {
       setPersistenceError(cause instanceof Error
@@ -84,6 +105,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
   async function commit(
     next: ProjectWorkspace
   ): Promise<ProjectWorkspace | undefined> {
+    if (yamlDraftRef.current !== undefined) return undefined;
     const project = projectRef.current;
     if (!project) return undefined;
     const durable = await persist(() => project.accept(next));
@@ -113,9 +135,54 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     return restored;
   }
 
+  function editYaml(next: string): void {
+    const project = projectRef.current;
+    const draft = next === activeYamlRef.current ? undefined : next;
+    yamlDraftRevisionRef.current += 1;
+    yamlDraftRef.current = draft;
+    setYaml(next);
+    setHasYamlDraft(draft !== undefined);
+    setYamlDiagnostics(draft === undefined
+      ? []
+      : parseProjectDocument(next).diagnostics);
+    if (!project) return;
+    void project.saveDraft(draft).then(
+      () => setPersistenceError(""),
+      (cause: unknown) => setPersistenceError(cause instanceof Error
+        ? `Autosave failed: ${cause.message}`
+        : "Autosave failed. The YAML draft may not survive reload.")
+    );
+  }
+
+  async function applyYaml(): Promise<ProjectWorkspace | undefined> {
+    const project = projectRef.current;
+    const draft = yamlDraftRef.current;
+    if (!project || draft === undefined) return undefined;
+    const draftRevision = yamlDraftRevisionRef.current;
+    const parsed = parseProjectDocument(draft);
+    setYamlDiagnostics(parsed.diagnostics);
+    if (!parsed.document || parsed.diagnostics.length) return undefined;
+
+    const imported = ProjectWorkspace.importYaml(draft);
+    const durable = await persist(() => project.acceptDraft(imported));
+    if (!durable) return undefined;
+    if (yamlDraftRevisionRef.current === draftRevision) {
+      yamlDraftRef.current = undefined;
+      setHasYamlDraft(false);
+      setYamlDiagnostics([]);
+      const activeYaml = durable.exportYaml();
+      activeYamlRef.current = activeYaml;
+      setYaml(activeYaml);
+    }
+    refreshHistoryControls(project);
+    return durable;
+  }
+
   return {
     workspace,
     yaml,
+    yamlDiagnostics,
+    hasYamlDraft,
     persistenceError,
     isSaving,
     canUndo: historyControls.canUndo,
@@ -123,6 +190,8 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     commit,
     startAutosave,
     navigateHistory,
+    editYaml,
+    applyYaml,
     isTransitionPending: () => transitionPending.current
   };
 }

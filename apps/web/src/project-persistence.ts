@@ -15,9 +15,13 @@ const ITEM_LIBRARY_KEY = "items";
 const FURNITURE_LIBRARY_KEY = "furniture";
 const FIXTURE_LIBRARY_KEY = "fixtures";
 
+export interface PersistedProjectSnapshot extends ProjectHistorySnapshot {
+  draft?: string;
+}
+
 export interface ProjectRepository {
-  load(): Promise<ProjectHistorySnapshot | undefined>;
-  save(snapshot: ProjectHistorySnapshot): Promise<void>;
+  load(): Promise<PersistedProjectSnapshot | undefined>;
+  save(snapshot: PersistedProjectSnapshot): Promise<void>;
 }
 
 export class SerializedProjectRepository implements ProjectRepository {
@@ -28,11 +32,11 @@ export class SerializedProjectRepository implements ProjectRepository {
     this.#repository = repository;
   }
 
-  load(): Promise<ProjectHistorySnapshot | undefined> {
+  load(): Promise<PersistedProjectSnapshot | undefined> {
     return this.#pendingSave.then(() => this.#repository.load());
   }
 
-  save(snapshot: ProjectHistorySnapshot): Promise<void> {
+  save(snapshot: PersistedProjectSnapshot): Promise<void> {
     this.#pendingSave = this.#pendingSave.then(
       () => this.#repository.save(snapshot),
       () => this.#repository.save(snapshot)
@@ -298,11 +302,11 @@ export class AutosavedItemLibrary {
 }
 
 export class IndexedDbProjectRepository implements ProjectRepository {
-  async load(): Promise<ProjectHistorySnapshot | undefined> {
+  async load(): Promise<PersistedProjectSnapshot | undefined> {
     const database = await openDatabase();
     try {
       const transaction = database.transaction(PROJECT_STORE, "readonly");
-      return await requestResult<ProjectHistorySnapshot | undefined>(
+      return await requestResult<PersistedProjectSnapshot | undefined>(
         transaction.objectStore(PROJECT_STORE).get(ACTIVE_PROJECT_KEY)
       );
     } finally {
@@ -310,7 +314,7 @@ export class IndexedDbProjectRepository implements ProjectRepository {
     }
   }
 
-  async save(snapshot: ProjectHistorySnapshot): Promise<void> {
+  async save(snapshot: PersistedProjectSnapshot): Promise<void> {
     const database = await openDatabase();
     try {
       const transaction = database.transaction(PROJECT_STORE, "readwrite");
@@ -325,10 +329,17 @@ export class IndexedDbProjectRepository implements ProjectRepository {
 export class AutosavedProject {
   readonly #repository: ProjectRepository;
   #history: ProjectHistory;
+  #draft?: string;
+  #pendingTransition: Promise<void> = Promise.resolve();
 
-  private constructor(history: ProjectHistory, repository: ProjectRepository) {
+  private constructor(
+    history: ProjectHistory,
+    repository: ProjectRepository,
+    draft?: string
+  ) {
     this.#history = history;
     this.#repository = repository;
+    this.#draft = draft;
   }
 
   static async restore(
@@ -336,7 +347,11 @@ export class AutosavedProject {
   ): Promise<AutosavedProject | undefined> {
     const snapshot = await repository.load();
     return snapshot
-      ? new AutosavedProject(ProjectHistory.restore(snapshot), repository)
+      ? new AutosavedProject(
+        ProjectHistory.restore(snapshot),
+        repository,
+        snapshot.draft
+      )
       : undefined;
   }
 
@@ -361,6 +376,28 @@ export class AutosavedProject {
     return this.#history.canRedo;
   }
 
+  get draft(): string | undefined {
+    return this.#draft;
+  }
+
+  async saveDraft(draft?: string): Promise<void> {
+    await this.#enqueue(async (history) => {
+      await this.#repository.save({
+        ...history.snapshot(),
+        ...(draft === undefined ? {} : { draft })
+      });
+      return { history, draft };
+    });
+  }
+
+  async acceptDraft(workspace: ProjectWorkspace): Promise<ProjectWorkspace> {
+    return this.#enqueue(async (history) => {
+      history.accept(workspace);
+      await this.#repository.save(history.snapshot());
+      return { history, draft: undefined };
+    });
+  }
+
   async accept(workspace: ProjectWorkspace): Promise<ProjectWorkspace> {
     return this.#persistTransition((history) => history.accept(workspace));
   }
@@ -380,10 +417,32 @@ export class AutosavedProject {
   async #persistTransition(
     transition: (history: ProjectHistory) => void
   ): Promise<ProjectWorkspace> {
-    const candidate = ProjectHistory.restore(this.#history.snapshot());
-    transition(candidate);
-    await this.#repository.save(candidate.snapshot());
-    this.#history = candidate;
-    return this.workspace;
+    return this.#enqueue(async (history) => {
+      transition(history);
+      await this.#repository.save({
+        ...history.snapshot(),
+        ...(this.#draft === undefined ? {} : { draft: this.#draft })
+      });
+      return { history, draft: this.#draft };
+    });
+  }
+
+  #enqueue(
+    transition: (
+      history: ProjectHistory
+    ) => Promise<{ history: ProjectHistory; draft?: string }>
+  ): Promise<ProjectWorkspace> {
+    const operation = this.#pendingTransition.then(async () => {
+      const candidate = ProjectHistory.restore(this.#history.snapshot());
+      const next = await transition(candidate);
+      this.#history = next.history;
+      this.#draft = next.draft;
+      return this.workspace;
+    });
+    this.#pendingTransition = operation.then(
+      () => undefined,
+      () => undefined
+    );
+    return operation;
   }
 }

@@ -2,8 +2,7 @@
 
 import "fake-indexeddb/auto";
 import {
-  ProjectWorkspace,
-  type ProjectHistorySnapshot
+  ProjectWorkspace
 } from "@smarchitect/core";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -14,17 +13,18 @@ import {
   SerializedProjectRepository,
   type ItemLibraryHistorySnapshot,
   type ItemLibraryRepository,
+  type PersistedProjectSnapshot,
   type ProjectRepository
 } from "./project-persistence.js";
 
 class MemoryProjectRepository implements ProjectRepository {
-  snapshot?: ProjectHistorySnapshot;
+  snapshot?: PersistedProjectSnapshot;
 
-  async load(): Promise<ProjectHistorySnapshot | undefined> {
+  async load(): Promise<PersistedProjectSnapshot | undefined> {
     return this.snapshot ? structuredClone(this.snapshot) : undefined;
   }
 
-  async save(snapshot: ProjectHistorySnapshot): Promise<void> {
+  async save(snapshot: PersistedProjectSnapshot): Promise<void> {
     this.snapshot = structuredClone(snapshot);
   }
 }
@@ -52,6 +52,32 @@ function deleteTestDatabase(): Promise<void> {
 beforeEach(deleteTestDatabase);
 
 describe("autosaved project recovery", () => {
+  it("persists a raw draft and clears it in the same save that applies it", async () => {
+    const repository = new MemoryProjectRepository();
+    let project = await AutosavedProject.create(
+      ProjectWorkspace.create("Draft persistence"),
+      repository
+    );
+    const invalidDraft = "schemaVersion: [";
+
+    await project.saveDraft(invalidDraft);
+    project = (await AutosavedProject.restore(repository))!;
+    expect(project.draft).toBe(invalidDraft);
+    expect(project.workspace.document.name).toBe("Draft persistence");
+    expect(repository.snapshot?.cursor).toBe(0);
+
+    const validDraft = project.workspace.rename("Applied draft").exportYaml();
+    await project.saveDraft(validDraft);
+    await project.acceptDraft(ProjectWorkspace.importYaml(validDraft));
+
+    expect(repository.snapshot?.draft).toBeUndefined();
+    expect(repository.snapshot?.cursor).toBe(1);
+    expect(repository.snapshot?.entries).toHaveLength(2);
+    project = (await AutosavedProject.restore(repository))!;
+    expect(project.workspace.document.name).toBe("Applied draft");
+    expect((await project.undo()).document.name).toBe("Draft persistence");
+  });
+
   it("persists one chronological Item Library history across item kinds", async () => {
     const repository = new IndexedDbItemLibraryRepository();
     const furniture = [{

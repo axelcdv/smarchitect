@@ -29,6 +29,8 @@ export function App({ projectRepository }: AppProps = {}) {
   const {
     workspace,
     yaml,
+    yamlDiagnostics,
+    hasYamlDraft,
     persistenceError,
     isSaving,
     canUndo,
@@ -117,15 +119,19 @@ export function App({ projectRepository }: AppProps = {}) {
       operationError={operationError}
       importInputRef={importInput}
       isSaving={isSaving}
+      hasYamlDraft={hasYamlDraft}
       isTransitionPending={isTransitionPending}
       library={library}
       workspace={workspace}
       yaml={yaml}
+      yamlDiagnostics={yamlDiagnostics}
+      onApplyYaml={() => void autosavedProject.applyYaml()}
       onCommit={commit}
       onImport={(event) => void importProject(event)}
       onNavigateHistory={navigateHistory}
       onOperationError={setOperationError}
       onRenameProject={(value) => void renameProject(value)}
+      onYamlChange={autosavedProject.editYaml}
     />
   );
 }

@@ -11,6 +11,7 @@ interface WorkspaceHeaderProps {
   importInputRef: RefObject<HTMLInputElement | null>;
   isDesignProposal: boolean;
   isSaving: boolean;
+  isEditingLocked: boolean;
   onImport: ChangeEventHandler<HTMLInputElement>;
   onNavigateHistory(direction: "undo" | "redo"): void;
   projectName: string;
@@ -23,6 +24,7 @@ export function WorkspaceHeader({
   importInputRef,
   isDesignProposal,
   isSaving,
+  isEditingLocked,
   onImport,
   onNavigateHistory,
   projectName,
@@ -40,7 +42,7 @@ export function WorkspaceHeader({
         <button
           type="button"
           className="secondary-button"
-          disabled={isSaving || !canUndo}
+          disabled={isSaving || isEditingLocked || !canUndo}
           onClick={() => onNavigateHistory("undo")}
         >
           Undo
@@ -48,13 +50,14 @@ export function WorkspaceHeader({
         <button
           type="button"
           className="secondary-button"
-          disabled={isSaving || !canRedo}
+          disabled={isSaving || isEditingLocked || !canRedo}
           onClick={() => onNavigateHistory("redo")}
         >
           Redo
         </button>
         <ProjectImportControl
           buttonClassName="secondary-button"
+          disabled={isSaving || isEditingLocked}
           importInputRef={importInputRef}
           onImport={onImport}
         />

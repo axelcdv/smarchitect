@@ -1,11 +1,17 @@
 import { Ajv2020, type ErrorObject } from "ajv/dist/2020.js";
 import {
   isAlias,
+  isMap,
   isNode,
+  isPair,
+  isScalar,
+  isSeq,
+  LineCounter,
   parseDocument,
   visit,
   type Document,
-  type Node
+  type Node,
+  type Pair
 } from "yaml";
 import projectDocumentSchema from "./project-document.schema.json" with {
   type: "json"
@@ -345,28 +351,60 @@ function nodeUsesRestrictedSyntax(node: Node): boolean {
   return Boolean(node.tag && !node.tag.startsWith("tag:yaml.org,2002:"));
 }
 
-function restrictedSyntaxDiagnostics(document: Document): Diagnostic[] {
+function escapeJsonPointerSegment(value: string | number): string {
+  return String(value).replace(/~/g, "~0").replace(/\//g, "~1");
+}
+
+function restrictedNodePath(
+  key: number | "key" | "value" | null,
+  path: readonly (Document | Node | Pair)[]
+): string {
+  const segments: (string | number)[] = [];
+  for (const [index, ancestor] of path.entries()) {
+    if (!isPair(ancestor)) continue;
+    const parent = path[index - 1];
+    if (isMap(parent) && isScalar(ancestor.key)) {
+      segments.push(String(ancestor.key.value));
+    } else if (isSeq(parent)) {
+      segments.push(parent.items.indexOf(ancestor));
+    }
+  }
+  if (typeof key === "number" && isSeq(path.at(-1))) segments.push(key);
+  return segments.length
+    ? `/${segments.map(escapeJsonPointerSegment).join("/")}`
+    : "/";
+}
+
+function restrictedSyntaxDiagnostics(
+  document: Document,
+  lineCounter: LineCounter
+): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
 
-  visit(document, (_key, value) => {
+  visit(document, (key, value, path) => {
     if (isNode(value) && nodeUsesRestrictedSyntax(value)) {
+      const position = value.range
+        ? lineCounter.linePos(value.range[0])
+        : { line: 1, col: 1 };
       diagnostics.push({
         code: "yaml.restricted-syntax",
         severity: "error",
-        path: "/",
+        path: restrictedNodePath(key, path),
         message:
-          "Project Documents do not allow YAML aliases, anchors, or custom tags."
+          "Remove the YAML alias, anchor, or custom tag; Project Documents allow only plain restricted YAML.",
+        line: position.line,
+        column: position.col
       });
     }
   });
 
   for (const error of document.errors) {
-    if (error.code === "TAG_RESOLVE_FAILED") {
+    if (error.code === "TAG_RESOLVE_FAILED" && diagnostics.length === 0) {
       diagnostics.push({
         code: "yaml.restricted-syntax",
         severity: "error",
         path: "/",
-        message: "Project Documents do not allow custom YAML tags.",
+        message: "Remove the custom YAML tag; Project Documents allow only standard restricted YAML.",
         line: error.linePos?.[0]?.line,
         column: error.linePos?.[0]?.col
       });
@@ -374,6 +412,40 @@ function restrictedSyntaxDiagnostics(document: Document): Diagnostic[] {
   }
 
   return diagnostics;
+}
+
+function diagnosticPathSegments(path: string): (string | number)[] {
+  return path.split("/").slice(1).filter(Boolean).map((segment) => {
+    const decoded = segment.replace(/~1/g, "/").replace(/~0/g, "~");
+    return /^\d+$/.test(decoded) ? Number(decoded) : decoded;
+  });
+}
+
+function locateDiagnostic(
+  diagnostic: Diagnostic,
+  document: Document,
+  lineCounter: LineCounter
+): Diagnostic {
+  if (diagnostic.line !== undefined && diagnostic.column !== undefined) {
+    return diagnostic;
+  }
+
+  const segments = diagnosticPathSegments(diagnostic.path);
+  let node: unknown;
+  for (let length = segments.length; length >= 0; length -= 1) {
+    node = length === 0
+      ? document.contents
+      : document.getIn(segments.slice(0, length), true);
+    if (isNode(node) && node.range) break;
+  }
+  const position = isNode(node) && node.range
+    ? lineCounter.linePos(node.range[0])
+    : { line: 1, col: 1 };
+  return {
+    ...diagnostic,
+    line: diagnostic.line ?? position.line,
+    column: diagnostic.column ?? position.col
+  };
 }
 
 export function validateProjectDocument(value: unknown): Diagnostic[] {
@@ -393,12 +465,14 @@ export function validateProjectDocument(value: unknown): Diagnostic[] {
 export function parseProjectDocument(
   source: string
 ): ParseProjectDocumentResult {
+  const lineCounter = new LineCounter();
   const yamlDocument = parseDocument(source, {
+    lineCounter,
     schema: "core",
     uniqueKeys: true,
     prettyErrors: true
   });
-  const syntaxDiagnostics = restrictedSyntaxDiagnostics(yamlDocument);
+  const syntaxDiagnostics = restrictedSyntaxDiagnostics(yamlDocument, lineCounter);
   const parseDiagnostics: Diagnostic[] = yamlDocument.errors
     .filter((error) => error.code !== "TAG_RESOLVE_FAILED")
     .map((error) => ({
@@ -412,14 +486,18 @@ export function parseProjectDocument(
 
   if (syntaxDiagnostics.length || parseDiagnostics.length) {
     return {
-      diagnostics: [...syntaxDiagnostics, ...parseDiagnostics]
+      diagnostics: [...syntaxDiagnostics, ...parseDiagnostics].map(
+        (diagnostic) => locateDiagnostic(diagnostic, yamlDocument, lineCounter)
+      )
     };
   }
 
   const parsedValue: unknown = yamlDocument.toJS({
     maxAliasCount: 0
   });
-  const diagnostics = validateProjectDocument(parsedValue);
+  const diagnostics = validateProjectDocument(parsedValue).map(
+    (diagnostic) => locateDiagnostic(diagnostic, yamlDocument, lineCounter)
+  );
 
   if (diagnostics.length) {
     return { diagnostics };

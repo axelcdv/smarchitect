@@ -359,7 +359,8 @@ h2 {
 }
 
 .scale-chip,
-.valid-chip {
+.valid-chip,
+.draft-chip {
   border-radius: 999px;
   padding: 6px 9px;
   font-family: var(--mono);
@@ -374,6 +375,20 @@ h2 {
 .valid-chip {
   background: #e1ebe4;
   color: var(--green);
+}
+
+.draft-chip {
+  background: #f3dfbd;
+  color: #774c13;
+}
+
+.draft-lock-notice {
+  margin: -4px 0 14px;
+  border: 1px solid #d7ae68;
+  background: #fff4df;
+  color: #69420e;
+  padding: 10px 12px;
+  font-size: 13px;
 }
 
 .wall-plan {
@@ -738,6 +753,45 @@ h2 {
   font-size: 12px;
   line-height: 1.7;
   padding: 22px;
+}
+
+.yaml-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.yaml-actions p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.yaml-diagnostics {
+  display: grid;
+  max-height: 240px;
+  gap: 8px;
+  overflow: auto;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.yaml-diagnostics li {
+  border-left: 3px solid #a02e21;
+  background: #f8e6e2;
+  padding: 8px 10px;
+  color: #7b241a;
+  font-size: 11px;
+}
+
+.yaml-diagnostics strong {
+  text-transform: uppercase;
+}
+
+.yaml-diagnostics p {
+  margin: 4px 0 0;
 }
 
 .visually-hidden {

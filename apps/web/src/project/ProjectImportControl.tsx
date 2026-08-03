@@ -33,6 +33,7 @@ export function ProjectImportControl({
         accept=".yaml,.yml,application/yaml,text/yaml"
         onChange={onImport}
         aria-label="Import Project Document"
+        disabled={disabled}
       />
     </>
   );
