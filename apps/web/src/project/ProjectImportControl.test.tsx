@@ -24,12 +24,12 @@ describe("ProjectImportControl", () => {
     const input = screen.getByLabelText("Import Project Document");
     const click = vi.spyOn(input, "click");
 
-    fireEvent.click(screen.getByRole("button", { name: "Import YAML" }));
+    fireEvent.click(screen.getByRole("button", { name: "Import Project" }));
 
     expect(click).toHaveBeenCalledOnce();
     expect(input).toHaveAttribute(
       "accept",
-      ".yaml,.yml,application/yaml,text/yaml"
+      ".yaml,.yml,.zip,application/yaml,text/yaml,application/zip"
     );
     expect(input).toHaveClass("visually-hidden");
   });
@@ -45,7 +45,7 @@ describe("ProjectImportControl", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Import YAML" })
+      screen.getByRole("button", { name: "Import Project" })
     ).toBeDisabled();
   });
 });

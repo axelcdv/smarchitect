@@ -3,6 +3,7 @@ import { ProjectWorkspace } from "./project-workspace.js";
 export interface ProjectHistorySnapshot {
   readonly entries: readonly string[];
   readonly cursor: number;
+  readonly retainedEntries?: readonly string[];
 }
 
 function restoreWorkspace(source: string): ProjectWorkspace {
@@ -12,15 +13,22 @@ function restoreWorkspace(source: string): ProjectWorkspace {
 export class ProjectHistory {
   #entries: string[];
   #cursor: number;
+  #retainedEntries: string[];
 
-  private constructor(entries: string[], cursor: number) {
+  private constructor(
+    entries: string[],
+    cursor: number,
+    retainedEntries: readonly string[] = []
+  ) {
     if (!entries.length || cursor < 0 || cursor >= entries.length) {
       throw new Error("Project history snapshot is invalid.");
     }
 
     entries.forEach(restoreWorkspace);
+    retainedEntries.forEach(restoreWorkspace);
     this.#entries = [...entries];
     this.#cursor = cursor;
+    this.#retainedEntries = [...retainedEntries];
   }
 
   static create(workspace: ProjectWorkspace): ProjectHistory {
@@ -28,7 +36,11 @@ export class ProjectHistory {
   }
 
   static restore(snapshot: ProjectHistorySnapshot): ProjectHistory {
-    return new ProjectHistory([...snapshot.entries], snapshot.cursor);
+    return new ProjectHistory(
+      [...snapshot.entries],
+      snapshot.cursor,
+      snapshot.retainedEntries
+    );
   }
 
   get workspace(): ProjectWorkspace {
@@ -55,6 +67,16 @@ export class ProjectHistory {
     this.accept(candidate);
   }
 
+  restoreCheckpoint(source: string): void {
+    restoreWorkspace(source);
+    this.#retainedEntries = [
+      ...this.#retainedEntries,
+      ...this.#entries.slice(this.#cursor + 1)
+    ];
+    this.#entries = [...this.#entries.slice(0, this.#cursor + 1), source];
+    this.#cursor = this.#entries.length - 1;
+  }
+
   undo(): ProjectWorkspace {
     if (!this.canUndo) {
       throw new Error("There is no transaction to undo.");
@@ -76,7 +98,10 @@ export class ProjectHistory {
   snapshot(): ProjectHistorySnapshot {
     return {
       entries: [...this.#entries],
-      cursor: this.#cursor
+      cursor: this.#cursor,
+      ...(this.#retainedEntries.length
+        ? { retainedEntries: [...this.#retainedEntries] }
+        : {})
     };
   }
 }

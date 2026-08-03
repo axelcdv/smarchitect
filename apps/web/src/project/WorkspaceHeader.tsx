@@ -2,8 +2,12 @@ import {
   type ChangeEventHandler,
   type RefObject
 } from "react";
+import type { ProjectCheckpoint } from "@smarchitect/core";
 import { ProjectImportControl } from "./ProjectImportControl.js";
-import { downloadProjectYaml } from "./project-file.js";
+import {
+  downloadProjectArchive,
+  downloadProjectYaml
+} from "./project-file.js";
 
 interface WorkspaceHeaderProps {
   canRedo: boolean;
@@ -16,6 +20,7 @@ interface WorkspaceHeaderProps {
   onNavigateHistory(direction: "undo" | "redo"): void;
   projectName: string;
   yaml: string;
+  checkpoints: readonly ProjectCheckpoint[];
 }
 
 export function WorkspaceHeader({
@@ -28,7 +33,8 @@ export function WorkspaceHeader({
   onImport,
   onNavigateHistory,
   projectName,
-  yaml
+  yaml,
+  checkpoints
 }: WorkspaceHeaderProps) {
   return (
     <header className="workspace-header">
@@ -67,6 +73,13 @@ export function WorkspaceHeader({
           onClick={() => downloadProjectYaml(yaml, projectName)}
         >
           Export YAML
+        </button>
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => downloadProjectArchive(yaml, checkpoints, projectName)}
+        >
+          Export Archive
         </button>
       </div>
     </header>

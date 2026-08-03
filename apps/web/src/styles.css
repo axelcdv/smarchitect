@@ -216,12 +216,57 @@ h2 {
   border-right: 1px solid var(--line);
 }
 
-.proposal-manager {
+.proposal-manager,
+.checkpoint-manager {
   display: grid;
   gap: 8px;
   margin-top: 24px;
   padding-top: 20px;
   border-top: 1px solid var(--line);
+}
+
+.checkpoint-list {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.checkpoint-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: #fffef9;
+  padding: 10px;
+}
+
+.checkpoint-list li div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.checkpoint-list strong {
+  overflow-wrap: anywhere;
+}
+
+.checkpoint-list small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.archive-migration-document {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+
+.archive-migration-document h3,
+.archive-migration-document p {
+  margin: 0 0 8px;
 }
 
 .proposal-heading {
