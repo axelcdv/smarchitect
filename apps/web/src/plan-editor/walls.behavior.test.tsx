@@ -25,6 +25,26 @@ function renderWallEditor(name: string): void {
 }
 
 describe("Walls", () => {
+  it("previews a snapped Wall while drawing without committing it", async () => {
+    renderWallEditor("Wall preview");
+
+    const plan = screen.getByLabelText("Ground floor wall editor");
+    setPlanBounds(plan);
+    fireEvent.pointerDown(plan, { clientX: 100, clientY: 260 });
+    fireEvent.pointerMove(plan, { clientX: 400, clientY: 260 });
+
+    expect(plan.querySelector(".wall-preview")).toHaveAttribute(
+      "points",
+      "-3000,-75 0,-75 0,75 -3000,75"
+    );
+    expect(screen.getByText("0 walls")).toBeInTheDocument();
+
+    fireEvent.pointerUp(plan, { clientX: 400, clientY: 260 });
+    await waitFor(() => {
+      expect(plan.querySelector(".wall-preview")).not.toBeInTheDocument();
+    });
+  });
+
   it("draws, selects, numerically edits, and deletes a Wall while updating YAML", async () => {
     renderWallEditor("Wall editor");
 

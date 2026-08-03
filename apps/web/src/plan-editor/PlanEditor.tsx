@@ -99,6 +99,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
       setMode,
       view,
       previewWorkspace,
+      wallPreview,
       beginItemPlacement,
       resetInteraction,
       zoom,
@@ -323,6 +324,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
           view={view}
           rooms={rooms}
           walls={displayedWalls}
+          wallPreview={wallPreview}
           openings={openings}
           roomLabels={roomLabels}
           furnitureDefinitions={activePlan.furnitureDefinitions ?? []}
