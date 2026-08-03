@@ -74,14 +74,15 @@ export async function runCli(
       diagnostics = error.diagnostics;
     }
 
+    const hasErrors = diagnostics.some(({ severity }) => severity === "error");
     dependencies.stdout(
       jsonLine({
-        valid: diagnostics.length === 0,
+        valid: !hasErrors,
         diagnostics
       })
     );
 
-    return diagnostics.length === 0 ? 0 : 1;
+    return hasErrors ? 1 : 0;
   } catch (error) {
     dependencies.stderr(
       jsonLine({

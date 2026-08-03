@@ -36,6 +36,7 @@ export interface PlanCanvasProps {
   furniturePlacements: readonly FurniturePlacement[];
   fixtureDefinitions: readonly FixtureDefinition[];
   fixturePlacements: readonly FixturePlacement[];
+  warningIds?: ReadonlySet<string>;
   selection: EditorSelection;
   onPointerDown: PointerEventHandler<SVGSVGElement>;
   onPointerMove: PointerEventHandler<SVGSVGElement>;
@@ -54,6 +55,7 @@ interface FootprintLayerProps {
   footprintClassName: string;
   selectedClassName: string;
   selectedPlacementId?: string;
+  warningIds: ReadonlySet<string>;
 }
 
 function FootprintLayer({
@@ -61,7 +63,8 @@ function FootprintLayer({
   placements,
   footprintClassName,
   selectedClassName,
-  selectedPlacementId
+  selectedPlacementId,
+  warningIds
 }: FootprintLayerProps) {
   return placements.map((placement) => {
     const definition = definitions.find(
@@ -71,9 +74,11 @@ function FootprintLayer({
     return (
       <polygon
         key={placement.id}
-        className={placement.id === selectedPlacementId
-          ? `${footprintClassName} ${selectedClassName}`
-          : footprintClassName}
+        className={[
+          footprintClassName,
+          placement.id === selectedPlacementId ? selectedClassName : "",
+          warningIds.has(placement.id) ? "design-warning-shape" : ""
+        ].filter(Boolean).join(" ")}
         points={planPolygonPoints(
           furnitureFootprintCorners(definition, placement)
         )}
@@ -94,6 +99,7 @@ export function PlanCanvas({
   furniturePlacements,
   fixtureDefinitions,
   fixturePlacements,
+  warningIds = new Set<string>(),
   selection,
   onPointerDown,
   onPointerMove,
@@ -165,6 +171,13 @@ export function PlanCanvas({
         </g>
       ))}
       <path className="wall-surface" d={wallSurfacePath(walls)} />
+      {walls.filter(({ id }) => warningIds.has(id)).map((wall) => (
+        <polygon
+          key={`warning:${wall.id}`}
+          className="design-warning-shape warning-wall"
+          points={wallPolygonPoints(wall)}
+        />
+      ))}
       {wallPreview ? (
         <polygon
           className="wall-preview"
@@ -177,6 +190,7 @@ export function PlanCanvas({
         footprintClassName="furniture-footprint"
         selectedClassName="selected-furniture"
         selectedPlacementId={selectedFurnitureId}
+        warningIds={warningIds}
       />
       <FootprintLayer
         definitions={fixtureDefinitions}
@@ -184,6 +198,7 @@ export function PlanCanvas({
         footprintClassName="fixture-footprint"
         selectedClassName="selected-fixture"
         selectedPlacementId={selectedFixtureId}
+        warningIds={warningIds}
       />
       {selectedWall ? (
         <polygon
@@ -223,9 +238,11 @@ export function PlanCanvas({
       )) : null}
       {roomLabels.map((label) => (
         <g
-          className={label.id === selectedRoomLabelId
-            ? "room-label selected-room-label"
-            : "room-label"}
+          className={[
+            "room-label",
+            label.id === selectedRoomLabelId ? "selected-room-label" : "",
+            warningIds.has(label.id) ? "design-warning-shape" : ""
+          ].filter(Boolean).join(" ")}
           key={label.id}
         >
           <circle

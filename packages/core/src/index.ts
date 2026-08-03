@@ -66,6 +66,7 @@ export {
   type CreateFixtureDefinitionOptions,
   type CreateProjectDocumentOptions,
   type Diagnostic,
+  type DiagnosticFocusKind,
   type DiagnosticSeverity,
   type DesignProposal,
   type EntityKind,

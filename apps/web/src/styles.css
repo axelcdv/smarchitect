@@ -173,6 +173,67 @@ h2 {
   font-size: 13px;
 }
 
+.status-warning {
+  color: #8a5a08;
+  font-weight: 700;
+}
+
+.design-warnings {
+  margin: 0 24px 16px;
+  border: 1px solid #ddbd78;
+  background: #fff8e8;
+  padding: 14px;
+}
+
+.design-warnings h3 {
+  margin: 0 0 4px;
+  color: #76500f;
+  font-size: 15px;
+}
+
+.design-warnings > div > p,
+.design-warnings li p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.design-warnings ul {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.design-warnings li {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e6ce9a;
+  padding-top: 8px;
+}
+
+.design-warnings code,
+.design-warnings small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #76500f;
+  font-size: 10px;
+}
+
+.design-warning-shape {
+  filter: drop-shadow(0 0 5px #d28b14);
+  stroke: #b97912 !important;
+  stroke-width: 24 !important;
+}
+
+.warning-wall {
+  fill: transparent;
+  pointer-events: none;
+}
+
 .workspace-shell {
   min-height: 100vh;
 }

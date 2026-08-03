@@ -6,6 +6,12 @@ export const PROJECT_DOCUMENT_SCHEMA_DIALECT =
 export type SchemaVersion = typeof CURRENT_SCHEMA_VERSION;
 export type MeasurementUnits = "metric";
 export type DiagnosticSeverity = "error" | "warning";
+export type DiagnosticFocusKind =
+  | "wall"
+  | "opening"
+  | "room-label"
+  | "furniture"
+  | "fixture";
 export type ExtensionData = Record<string, unknown>;
 
 export interface Level {
@@ -302,6 +308,11 @@ export interface Diagnostic {
   severity: DiagnosticSeverity;
   path: string;
   message: string;
+  affectedIds?: string[];
+  focus?: {
+    kind: DiagnosticFocusKind;
+    id: string;
+  };
   line?: number;
   column?: number;
 }
