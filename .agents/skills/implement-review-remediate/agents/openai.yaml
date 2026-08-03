@@ -1,0 +1,4 @@
+interface:
+  display_name: "Implement, Review, Remediate"
+  short_description: "Run a three-agent delivery and review cycle"
+  default_prompt: "Use $implement-review-remediate to implement this issue, independently review the PR, and address every review comment."
