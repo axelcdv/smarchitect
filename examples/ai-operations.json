@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "timestamp": "2026-08-03T12:00:00.000Z",
+  "operations": [
+    {
+      "op": "wall.add",
+      "id": "wall_00000000-0000-4000-8000-000000000101",
+      "input": {
+        "start": { "x": 0, "y": 0 },
+        "end": { "x": 4000, "y": 0 },
+        "thicknessMm": 150,
+        "heightMm": 2500
+      }
+    },
+    {
+      "op": "wall.update",
+      "id": "wall_00000000-0000-4000-8000-000000000101",
+      "update": { "lengthMm": 4200 }
+    },
+    {
+      "op": "opening.add",
+      "id": "opening_00000000-0000-4000-8000-000000000102",
+      "input": {
+        "kind": "passage",
+        "hostWallId": "wall_00000000-0000-4000-8000-000000000101",
+        "positionMm": 500,
+        "widthMm": 900,
+        "heightMm": 2100
+      }
+    },
+    {
+      "op": "opening.update",
+      "id": "opening_00000000-0000-4000-8000-000000000102",
+      "update": { "widthMm": 1000 }
+    },
+    {
+      "op": "roomLabel.add",
+      "id": "room-label_00000000-0000-4000-8000-000000000103",
+      "input": { "name": "Kitchen", "position": { "x": 1000, "y": 1000 } }
+    },
+    {
+      "op": "roomLabel.update",
+      "id": "room-label_00000000-0000-4000-8000-000000000103",
+      "update": { "name": "Open kitchen" }
+    },
+    {
+      "op": "furniture.place",
+      "id": "furniture_placement_00000000-0000-4000-8000-000000000104",
+      "definition": {
+        "id": "furniture_definition_00000000-0000-4000-8000-000000000105",
+        "name": "Table",
+        "widthMm": 1600,
+        "depthMm": 900,
+        "heightMm": 750,
+        "extensions": {}
+      },
+      "input": { "position": { "x": 1800, "y": 1200 }, "rotationDeg": 0 }
+    },
+    {
+      "op": "furniture.updatePlacement",
+      "id": "furniture_placement_00000000-0000-4000-8000-000000000104",
+      "update": { "rotationDeg": 90 }
+    },
+    {
+      "op": "furniture.makePlacementUnique",
+      "id": "furniture_placement_00000000-0000-4000-8000-000000000104",
+      "newDefinitionId": "furniture_definition_00000000-0000-4000-8000-000000000109"
+    },
+    {
+      "op": "furniture.updateDefinition",
+      "id": "furniture_definition_00000000-0000-4000-8000-000000000109",
+      "update": { "name": "AI table" }
+    },
+    {
+      "op": "fixture.place",
+      "id": "fixture_placement_00000000-0000-4000-8000-000000000106",
+      "definition": {
+        "id": "fixture_definition_00000000-0000-4000-8000-000000000107",
+        "name": "Sink",
+        "widthMm": 800,
+        "depthMm": 500,
+        "heightMm": 900,
+        "extensions": {}
+      },
+      "input": { "position": { "x": 3000, "y": 500 }, "rotationDeg": 0 }
+    },
+    {
+      "op": "fixture.makePlacementUnique",
+      "id": "fixture_placement_00000000-0000-4000-8000-000000000106",
+      "newDefinitionId": "fixture_definition_00000000-0000-4000-8000-000000000110"
+    },
+    {
+      "op": "fixture.updateDefinition",
+      "id": "fixture_definition_00000000-0000-4000-8000-000000000110",
+      "update": { "widthMm": 900 }
+    },
+    {
+      "op": "proposal.create",
+      "id": "design_proposal_00000000-0000-4000-8000-000000000108",
+      "name": "AI alternative"
+    },
+    {
+      "op": "proposal.rename",
+      "id": "design_proposal_00000000-0000-4000-8000-000000000108",
+      "name": "AI alternative v2"
+    }
+  ]
+}
