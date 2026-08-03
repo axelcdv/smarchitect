@@ -13,7 +13,6 @@ import {
   ProjectWorkspace,
   snapAngle,
   snapPoint,
-  wallAngleDeg,
   wallPathLength,
   type Opening,
   type OpeningUpdate,
@@ -33,26 +32,26 @@ import {
   type PointerEvent,
   type WheelEvent
 } from "react";
-import { BufferedInput } from "./BufferedInput.js";
 import { useAutosavedProject } from "./use-autosaved-project.js";
-import { PlacementInspector } from "./PlacementInspector.js";
 import { useItemLibrary } from "./use-item-library.js";
 import {
   createDefaultOpeningInput,
-  OpeningProperties,
   OpeningSymbol
 } from "./OpeningEditor.js";
 import { ProjectDocumentPanel } from "./project/ProjectDocumentPanel.js";
 import { ProjectSidebar } from "./project/ProjectSidebar.js";
 import { WelcomeScreen } from "./project/WelcomeScreen.js";
 import { WorkspaceHeader } from "./project/WorkspaceHeader.js";
+import type { OpeningConflict } from "./plan-editor/OpeningConflictPanel.js";
+import {
+  SelectionInspector
+} from "./plan-editor/SelectionInspector.js";
 import { useEditorSelection } from "./plan-editor/use-editor-selection.js";
+import type {
+  RoomLabelEditField
+} from "./plan-editor/RoomLabelInspector.js";
+import type { WallEditField } from "./plan-editor/WallInspector.js";
 import "./styles.css";
-
-type WallEditField =
-  | "startX" | "startY" | "endX" | "endY"
-  | "lengthMm" | "angleDeg" | "thicknessMm" | "heightMm";
-type RoomLabelEditField = "name" | "x" | "y";
 
 function wallPolygonPoints(wall: Wall): string {
   return deriveWallFaces(wall)
@@ -83,11 +82,7 @@ export function App() {
   const [draftName, setDraftName] = useState("");
   const [proposalName, setProposalName] = useState("");
   const [operationError, setOperationError] = useState("");
-  const [openingConflict, setOpeningConflict] = useState<{
-    wallId: string;
-    update: WallUpdate;
-    openingIds: string[];
-  }>();
+  const [openingConflict, setOpeningConflict] = useState<OpeningConflict>();
   const [placingItem, setPlacingItem] = useState<{
     kind: "furniture" | "fixture";
     definitionId: string;
@@ -147,6 +142,7 @@ export function App() {
   const furniturePlacements = activeLevel?.furniturePlacements ?? [];
   const fixturePlacements = activeLevel?.fixturePlacements ?? [];
   const {
+    selection,
     wall: selectedWall,
     opening: selectedOpening,
     roomLabel: selectedRoomLabel,
@@ -874,159 +870,105 @@ export function App() {
               </g>
             ))}
           </svg>
-          {selectedWall ? (
-            <div className="wall-properties" aria-label="Selected wall properties">
-              {([
-                ["startX", "Start X (mm)", selectedWall.path.start.x],
-                ["startY", "Start Y (mm)", selectedWall.path.start.y],
-                ["endX", "End X (mm)", selectedWall.path.end.x],
-                ["endY", "End Y (mm)", selectedWall.path.end.y],
-                ["lengthMm", "Wall length (mm)", Math.round(Math.hypot(selectedWall.path.end.x - selectedWall.path.start.x, selectedWall.path.end.y - selectedWall.path.start.y))],
-                ["angleDeg", "Wall angle (deg)", Number(wallAngleDeg(selectedWall).toFixed(2))],
-                ["thicknessMm", "Wall thickness (mm)", selectedWall.thicknessMm],
-                ["heightMm", "Wall height (mm)", selectedWall.heightMm]
-              ] satisfies [WallEditField, string, number][]).map(([field, label, value]) => (
-                <label key={field}>
-                  <span>{label}</span>
-                  <BufferedInput
-                    aria-label={label}
-                    disabled={isSaving}
-                    resetKey={operationError}
-                    type="number"
-                    step={field === "angleDeg" ? "any" : 1}
-                    value={value}
-                    onCommit={(value) => void editSelected(field, value)}
-                  />
-                </label>
-              ))}
-              <button type="button" className="danger-button" disabled={isSaving} onClick={async () => {
-                if (await commit(workspace.deleteWall(selectedWall.id))) {
-                  clearSelection();
-                }
-              }}>Delete wall</button>
-            </div>
-          ) : null}
-          {selectedRoomLabel ? (
-            <div className="room-label-properties" aria-label="Selected Room Label properties">
-              <label>
-                <span>Room Label name</span>
-                <BufferedInput
-                  disabled={isSaving}
-                  resetKey={operationError}
-                  aria-label="Room Label name"
-                  value={selectedRoomLabel.name}
-                  onCommit={(value) => void editSelectedRoomLabel("name", value)}
-                />
-              </label>
-              {([
-                ["x", "Room Label X (mm)", selectedRoomLabel.position.x],
-                ["y", "Room Label Y (mm)", selectedRoomLabel.position.y]
-              ] satisfies [RoomLabelEditField, string, number][]).map(([field, label, value]) => (
-                <label key={field}>
-                  <span>{label}</span>
-                  <BufferedInput
-                    aria-label={label}
-                    disabled={isSaving}
-                    resetKey={operationError}
-                    type="number"
-                    value={value}
-                    onCommit={(value) => void editSelectedRoomLabel(field, value)}
-                  />
-                </label>
-              ))}
-              <button
-                type="button"
-                className="danger-button"
-                disabled={isSaving}
-                onClick={async () => {
-                  if (await commit(workspace.deleteRoomLabel(selectedRoomLabel.id))) {
-                    clearSelection();
-                  }
-                }}
-              >
-                Delete room label
-              </button>
-            </div>
-          ) : null}
-          {diagnostics.filter(({ code }) => code.startsWith("room-label.")).map(
-            ({ code, message }, index) => (
-              <p className="room-diagnostic" role="alert" key={`${code}:${index}`}>
-                {message}
-              </p>
-            )
-          )}
-          {openingConflict ? (
-            <div className="opening-conflict" role="alert" aria-label="Opening conflict resolution">
-              <strong>Wall edit conflicts with hosted Openings</strong>
-              <p>
-                Affected: {openings
-                  .filter(({ id }) => openingConflict.openingIds.includes(id))
-                  .map(({ kind, id }) => `${kind} ${id}`)
-                  .join(", ")}
-              </p>
-              <button type="button" disabled={isSaving} onClick={() => void resolveOpeningConflict("fit")}>Fit openings and apply</button>
-              <button type="button" className="danger-button" disabled={isSaving} onClick={() => void resolveOpeningConflict("delete")}>Delete conflicting openings and apply</button>
-              <button type="button" disabled={isSaving} onClick={() => {
+          <SelectionInspector
+            selection={selection}
+            wall={{
+              wall: selectedWall,
+              disabled: isSaving,
+              resetKey: operationError,
+              onEdit: (field, value) => void editSelected(field, value),
+              onDelete: () => {
+                if (!selectedWall) return;
+                void commit(workspace.deleteWall(selectedWall.id))
+                  .then((durable) => {
+                    if (durable) clearSelection();
+                  });
+              }
+            }}
+            roomLabel={{
+              roomLabel: selectedRoomLabel,
+              diagnostics,
+              disabled: isSaving,
+              resetKey: operationError,
+              onEdit: (field, value) =>
+                void editSelectedRoomLabel(field, value),
+              onDelete: () => {
+                if (!selectedRoomLabel) return;
+                void commit(workspace.deleteRoomLabel(selectedRoomLabel.id))
+                  .then((durable) => {
+                    if (durable) clearSelection();
+                  });
+              }
+            }}
+            opening={{
+              opening: selectedOpening,
+              conflict: openingConflict,
+              openings,
+              disabled: isSaving,
+              onResolveConflict: (resolution) =>
+                void resolveOpeningConflict(resolution),
+              onCancelConflict: () => {
                 setOpeningConflict(undefined);
                 setOperationError("");
-              }}>Cancel wall edit</button>
-            </div>
-          ) : null}
-          {selectedOpening ? (
-            <OpeningProperties
-              opening={selectedOpening}
-              isSaving={isSaving}
-              onEdit={(update) => void editOpening(update)}
-              onDelete={() => {
+              },
+              onEdit: (update) => void editOpening(update),
+              onDelete: () => {
+                if (!selectedOpening) return;
                 void commit(workspace.deleteOpening(selectedOpening.id))
                   .then((durable) => {
                     if (durable) selectWall(selectedOpening.hostWallId);
                   });
-              }}
-            />
-          ) : null}
-          {selectedFurniture && selectedFurnitureDefinition ? (
-            <PlacementInspector
-              definition={selectedFurnitureDefinition}
-              disabled={isSaving || library.isSaving}
-              libraryDefinition={selectedLibraryDefinition}
-              placement={selectedFurniture}
-              onUpdatePlacement={(update) => void editFurniturePlacement(update)}
-              onUpdateDefinition={(update) => void editEmbeddedDefinition(update)}
-              onMakeUnique={() => void commit(
-                workspace.makeFurniturePlacementUnique(selectedFurniture.id)
-              )}
-              onDelete={async () => {
-                if (await commit(
+              }
+            }}
+            furniture={{
+              placement: selectedFurniture,
+              definition: selectedFurnitureDefinition,
+              libraryDefinition: selectedLibraryDefinition,
+              disabled: isSaving || library.isSaving,
+              onUpdatePlacement: (update) =>
+                void editFurniturePlacement(update),
+              onUpdateDefinition: (update) =>
+                void editEmbeddedDefinition(update),
+              onMakeUnique: () => {
+                if (!selectedFurniture) return;
+                void commit(
+                  workspace.makeFurniturePlacementUnique(selectedFurniture.id)
+                );
+              },
+              onDelete: () => {
+                if (!selectedFurniture) return;
+                void commit(
                   workspace.deleteFurniturePlacement(selectedFurniture.id)
-                )) {
-                  clearSelection();
-                }
-              }}
-            />
-          ) : null}
-          {selectedFixture && selectedFixtureDefinition ? (
-            <PlacementInspector
-              kind="Fixture"
-              definition={selectedFixtureDefinition}
-              disabled={isSaving || library.isSaving}
-              libraryDefinition={selectedFixtureLibraryDefinition}
-              placement={selectedFixture}
-              onUpdatePlacement={(update) => void editFixturePlacement(update)}
-              onUpdateDefinition={(update) =>
-                void editEmbeddedFixtureDefinition(update)}
-              onMakeUnique={() => void commit(
-                workspace.makeFixturePlacementUnique(selectedFixture.id)
-              )}
-              onDelete={async () => {
-                if (await commit(
+                ).then((durable) => {
+                  if (durable) clearSelection();
+                });
+              }
+            }}
+            fixture={{
+              placement: selectedFixture,
+              definition: selectedFixtureDefinition,
+              libraryDefinition: selectedFixtureLibraryDefinition,
+              disabled: isSaving || library.isSaving,
+              onUpdatePlacement: (update) =>
+                void editFixturePlacement(update),
+              onUpdateDefinition: (update) =>
+                void editEmbeddedFixtureDefinition(update),
+              onMakeUnique: () => {
+                if (!selectedFixture) return;
+                void commit(
+                  workspace.makeFixturePlacementUnique(selectedFixture.id)
+                );
+              },
+              onDelete: () => {
+                if (!selectedFixture) return;
+                void commit(
                   workspace.deleteFixturePlacement(selectedFixture.id)
-                )) {
-                  clearSelection();
-                }
-              }}
-            />
-          ) : null}
+                ).then((durable) => {
+                  if (durable) clearSelection();
+                });
+              }
+            }}
+          />
         </section>
 
         <ProjectDocumentPanel yaml={yaml} />
