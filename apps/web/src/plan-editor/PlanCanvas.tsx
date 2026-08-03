@@ -16,19 +16,13 @@ import type {
   WheelEventHandler
 } from "react";
 import { OpeningSymbol } from "../OpeningEditor.js";
+import type { PlanCanvasView } from "./editor-types.js";
 import type { EditorSelection } from "./use-editor-selection.js";
 import {
   planPolygonPoints,
   wallPolygonPoints,
   wallSurfacePath
 } from "./plan-geometry.js";
-
-export interface PlanCanvasView {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
 
 export interface PlanCanvasProps {
   levelName: string;
