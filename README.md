@@ -27,7 +27,7 @@ pnpm test
 pnpm build
 ```
 
-## Validate a Project Document
+## Project Document CLI
 
 Build the packages, then validate a file:
 
@@ -42,14 +42,35 @@ Use `-` to read from standard input:
 pnpm --filter @smarchitect/cli start -- validate - < project.yaml
 ```
 
-The command prints JSON diagnostics and exits with `0` for a valid document,
-`1` for an invalid document, and `2` for usage or input errors.
-
-Supported older documents can be migrated explicitly without changing the
-input file. Review the YAML written to standard output before replacing or
-importing anything:
+Inspect the complete semantic document through a file or standard input:
 
 ```sh
+pnpm --filter @smarchitect/cli start -- inspect project.yaml
+pnpm --filter @smarchitect/cli start -- inspect - < project.yaml
+```
+
+Apply a deterministic, provider-neutral operation batch. The result goes to
+standard output unless `--output` selects a file:
+
+```sh
+pnpm --filter @smarchitect/cli start -- apply project.yaml \
+  --operations examples/ai-operations.json --output updated-project.yaml
+```
+
+The batch is atomic. If any operation fails, no result is written, including
+when the selected output path is also the input path. The versioned JSON format,
+complete operation catalogue, output contracts, and deterministic examples are
+documented in [`docs/cli.md`](docs/cli.md).
+
+Commands use exit status `0` for success, `1` for invalid documents, migrations,
+or domain operations, and `2` for usage, input, or output errors. Diagnostics are
+JSON objects with stable `code`, `severity`, `path`, and `message` fields.
+
+Supported older documents can be previewed and migrated explicitly without
+changing the input file:
+
+```sh
+pnpm --filter @smarchitect/cli start -- migrate legacy-project.yaml --preview
 pnpm --filter @smarchitect/cli start -- migrate legacy-project.yaml > migrated-project.yaml
 ```
 
