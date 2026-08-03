@@ -1,4 +1,7 @@
-export const CURRENT_SCHEMA_VERSION = "1.0.0" as const;
+export const CURRENT_SCHEMA_VERSION = "1.1.0" as const;
+export const PREVIOUS_SCHEMA_VERSION = "1.0.0" as const;
+export const PROJECT_DOCUMENT_SCHEMA_DIALECT =
+  "https://json-schema.org/draft/2020-12/schema" as const;
 
 export type SchemaVersion = typeof CURRENT_SCHEMA_VERSION;
 export type MeasurementUnits = "metric";
@@ -16,6 +19,12 @@ export interface Level {
   furniturePlacements?: FurniturePlacement[];
   fixturePlacements?: FixturePlacement[];
   extensions: ExtensionData;
+}
+
+export interface LevelUpdate {
+  name?: string;
+  baseElevationMm?: number;
+  defaultWallHeightMm?: number;
 }
 
 export interface PointMm {
@@ -265,6 +274,7 @@ export type ActivePlanSelection =
 
 export interface ProjectDocument {
   schemaVersion: SchemaVersion;
+  schemaDialect: typeof PROJECT_DOCUMENT_SCHEMA_DIALECT;
   id: string;
   name: string;
   units: MeasurementUnits;
@@ -299,6 +309,16 @@ export interface Diagnostic {
 export interface ParseProjectDocumentResult {
   document?: ProjectDocument;
   diagnostics: Diagnostic[];
+}
+
+export interface ProjectDocumentMigrationPreview {
+  sourceVersion: typeof PREVIOUS_SCHEMA_VERSION;
+  targetVersion: SchemaVersion;
+  schemaDialect: typeof PROJECT_DOCUMENT_SCHEMA_DIALECT;
+  originalSource: string;
+  migratedSource: string;
+  document: ProjectDocument;
+  changes: readonly string[];
 }
 
 export type EntityKind =

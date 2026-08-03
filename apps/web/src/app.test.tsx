@@ -12,12 +12,54 @@ import {
 } from "@smarchitect/core";
 import { describe, expect, it, vi } from "vitest";
 import { App } from "./App.js";
+import authoredProjectSource from "../../../packages/core/src/fixtures/authored-project-1.1.0.yaml?raw";
 import {
   FailableProjectRepository,
   setPlanBounds
 } from "./test/app-test-setup.js";
 
 describe("App project lifecycle and shell integration", () => {
+  it("preserves the golden authored YAML through GUI entity operations", async () => {
+    const source = authoredProjectSource;
+    const file = new File([source], "authored-project.yaml", {
+      type: "application/yaml"
+    });
+    Object.defineProperty(file, "text", { value: async () => source });
+
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Import Project Document"), {
+      target: { files: [file] }
+    });
+    const rename = await screen.findByLabelText("Rename project");
+    await waitFor(() => expect(rename).toBeEnabled());
+    fireEvent.change(rename, { target: { value: "GUI renamed project" } });
+    fireEvent.blur(rename);
+
+    await screen.findByRole("heading", { name: "GUI renamed project" });
+    fireEvent.click(screen.getByRole("button", { name: /Authored alternative/ }));
+    const proposalRename = await screen.findByLabelText("Rename Design Proposal");
+    fireEvent.change(proposalRename, {
+      target: { value: "GUI refined alternative" }
+    });
+    await waitFor(() => expect(proposalRename).toHaveValue("GUI refined alternative"));
+    const yaml = (screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value;
+    expect(yaml).toContain(
+      "name: GUI renamed project # project entity comment"
+    );
+    expect(yaml).toContain("# wall entity comment");
+    expect(yaml).toContain("plumbingZone: A");
+    expect(yaml).toContain("# proposal level entity comment");
+    expect(yaml).toContain("authoredOrder: preserved");
+    expect(yaml).toContain(
+      "name: GUI refined alternative # design proposal entity comment"
+    );
+    expect(yaml).toContain("reviewStatus: authored");
+    expect(yaml.indexOf("name: GUI renamed project"))
+      .toBeLessThan(yaml.indexOf("schemaVersion:"));
+  });
+
   it("keeps incomplete YAML as a draft and locks graphical editing", async () => {
     const repository = new FailableProjectRepository();
     const workspace = ProjectWorkspace.create("Draft-safe home");
@@ -217,6 +259,47 @@ describe("App project lifecycle and shell integration", () => {
     expect(createObjectUrl).toHaveBeenCalledOnce();
     expect(click).toHaveBeenCalledOnce();
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:project-document");
+  });
+
+  it("previews and confirms an older Project Document migration", async () => {
+    const current = ProjectWorkspace.create("Legacy apartment").exportYaml();
+    const original = current
+      .replace("schemaVersion: 1.1.0", "schemaVersion: 1.0.0")
+      .replace(
+        "schemaDialect: https://json-schema.org/draft/2020-12/schema\n",
+        ""
+      )
+      .replace("name: Legacy apartment", "name: Legacy apartment # authored");
+    const file = new File([original], "legacy.yaml", {
+      type: "application/yaml"
+    });
+    Object.defineProperty(file, "text", { value: async () => original });
+
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Import Project Document"), {
+      target: { files: [file] }
+    });
+
+    const dialog = await screen.findByRole("dialog", {
+      name: /review migration from 1\.0\.0 to 1\.1\.0/i
+    });
+    expect(dialog).toHaveTextContent(/imported file is unchanged/i);
+    expect(screen.getByLabelText("Original YAML")).toHaveValue(original);
+    expect(screen.queryByRole("heading", { name: "Legacy apartment" }))
+      .not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Confirm migration" }));
+
+    expect(await screen.findByRole("heading", { name: "Legacy apartment" }))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const migratedYaml = (screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value;
+    expect(migratedYaml).toContain("name: Legacy apartment # authored");
+    expect(migratedYaml).toContain(
+      "schemaDialect: https://json-schema.org/draft/2020-12/schema"
+    );
   });
 
   it("creates, selects, renames, stales, deletes, and restores Design Proposals", async () => {

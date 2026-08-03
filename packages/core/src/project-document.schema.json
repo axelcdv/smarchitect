@@ -1,11 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://smarchitect.dev/schemas/project-document/1.0.0",
+  "$id": "https://smarchitect.dev/schemas/project-document/1.1.0",
   "title": "Smarchitect Project Document",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schemaVersion",
+    "schemaDialect",
     "id",
     "name",
     "units",
@@ -15,7 +16,10 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "1.0.0"
+      "const": "1.1.0"
+    },
+    "schemaDialect": {
+      "const": "https://json-schema.org/draft/2020-12/schema"
     },
     "id": {
       "type": "string",

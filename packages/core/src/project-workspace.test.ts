@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { stringify } from "yaml";
 import {
   CURRENT_SCHEMA_VERSION,
+  PROJECT_DOCUMENT_SCHEMA_DIALECT,
   ProjectValidationError,
   ProjectWorkspace,
   createProjectDocument,
@@ -254,7 +255,7 @@ describe("Project Workspace acceptance seam", () => {
     expect(validateProjectDocument(unknownField)).toContainEqual(
       expect.objectContaining({
         code: "schema.invalid",
-        path: "/designProposals/0"
+        path: "/designProposals/0/comparisonMode"
       })
     );
   });
@@ -311,6 +312,7 @@ describe("Project Workspace acceptance seam", () => {
 
     expect(document).toEqual({
       schemaVersion: CURRENT_SCHEMA_VERSION,
+      schemaDialect: PROJECT_DOCUMENT_SCHEMA_DIALECT,
       id: "project_00000000-0000-4000-8000-000000000001",
       name: "My renovation",
       units: "metric",
@@ -465,7 +467,8 @@ describe("Project Workspace acceptance seam", () => {
   it("preserves authored YAML through every Opening mutation", () => {
     const source = `# project comment
 name: Authored openings # name comment
-schemaVersion: 1.0.0
+schemaVersion: 1.1.0
+schemaDialect: https://json-schema.org/draft/2020-12/schema
 units: metric
 id: project_00000000-0000-4000-8000-000000000001
 levels:
@@ -528,6 +531,58 @@ extensions: {}
     );
     expect(yaml).not.toContain(`id: ${addedId}`);
     expect(ProjectWorkspace.importYaml(yaml).document).toEqual(deleted.document);
+  });
+
+  it("preserves surviving Opening nodes when one operation deletes several", () => {
+    const workspace = ProjectWorkspace.create("Multiple conflicts", {
+      idFactory: deterministicOpeningIdFactory()
+    }).addWall({
+      start: { x: 0, y: 0 },
+      end: { x: 4000, y: 0 }
+    });
+    const wallId = workspace.activeLevel.walls[0]!.id;
+    const withOpenings = workspace
+      .addOpening({
+        kind: "passage",
+        hostWallId: wallId,
+        positionMm: 100,
+        widthMm: 500,
+        heightMm: 2000
+      })
+      .addOpening({
+        kind: "passage",
+        hostWallId: wallId,
+        positionMm: 1600,
+        widthMm: 500,
+        heightMm: 2000
+      })
+      .addOpening({
+        kind: "passage",
+        hostWallId: wallId,
+        positionMm: 3000,
+        widthMm: 500,
+        heightMm: 2000
+      });
+    const authored = ProjectWorkspace.importYaml(
+      stringify(withOpenings.document, {
+        collectionStyle: "block",
+        lineWidth: 0
+      }).replace(
+        "kind: passage",
+        "kind: passage # surviving authored opening"
+      )
+    );
+
+    const resolved = authored.updateWallResolvingOpenings(
+      wallId,
+      { lengthMm: 1000 },
+      "delete"
+    );
+
+    expect(resolved.activeLevel.openings).toHaveLength(1);
+    expect(resolved.exportYaml()).toContain("# surviving authored opening");
+    expect(ProjectWorkspace.importYaml(resolved.exportYaml()).document)
+      .toEqual(resolved.document);
   });
 
   it("resolves invalidating Wall edits atomically for hosted Openings", () => {
@@ -622,7 +677,8 @@ extensions: {}
   it("preserves authored YAML comments, ordering, and extensions during Room Label mutations", () => {
     const source = `# authored project comment
 name: Labelled home # keep project name comment
-schemaVersion: 1.0.0
+schemaVersion: 1.1.0
+schemaDialect: https://json-schema.org/draft/2020-12/schema
 units: metric
 id: project_00000000-0000-4000-8000-000000000001
 levels:
@@ -724,7 +780,8 @@ extensions:
   });
 
   it("preserves pre-Furniture 1.0 documents without silently adding collections", () => {
-    const legacyYaml = `schemaVersion: 1.0.0
+    const legacyYaml = `schemaVersion: 1.1.0
+schemaDialect: https://json-schema.org/draft/2020-12/schema
 id: project_00000000-0000-4000-8000-000000000001
 name: Existing project
 units: metric
@@ -769,12 +826,13 @@ extensions: {}
       code: "schema-version.unsupported",
       severity: "error",
       path: "/schemaVersion",
-      message: `Unsupported schema version "99.0.0". Expected "${CURRENT_SCHEMA_VERSION}".`
+      message: expect.stringMatching(/not supported.*left untouched/i)
     }));
   });
 
   it("rejects malformed stable IDs and invalid Level dimensions", () => {
-    const yaml = `schemaVersion: 1.0.0
+    const yaml = `schemaVersion: 1.1.0
+schemaDialect: https://json-schema.org/draft/2020-12/schema
 id: not-stable
 name: Broken project
 units: metric
@@ -821,7 +879,8 @@ extensions: {}
   });
 
   it("rejects aliases and custom YAML tags", () => {
-    const aliasResult = parseProjectDocument(`schemaVersion: 1.0.0
+    const aliasResult = parseProjectDocument(`schemaVersion: 1.1.0
+schemaDialect: https://json-schema.org/draft/2020-12/schema
 id: &projectId project_00000000-0000-4000-8000-000000000001
 name: Aliased
 units: metric
@@ -838,7 +897,7 @@ extensions: {}
       expect.objectContaining({
         code: "yaml.restricted-syntax",
         path: "/activeLevelId",
-        line: 5,
+        line: 6,
         column: expect.any(Number),
         message: expect.stringMatching(/remove.*alias/i)
       })
@@ -849,7 +908,7 @@ extensions: {}
   });
 
   it("locates structural and semantic diagnostics in YAML source", () => {
-    const structural = parseProjectDocument(`schemaVersion: 1.0.0\nname: Missing fields\n`);
+    const structural = parseProjectDocument(`schemaVersion: 1.1.0\nschemaDialect: https://json-schema.org/draft/2020-12/schema\nname: Missing fields\n`);
     expect(structural.diagnostics[0]).toEqual(expect.objectContaining({
       severity: "error",
       line: expect.any(Number),

@@ -1,6 +1,8 @@
 import {
   ProjectValidationError,
-  ProjectWorkspace
+  ProjectWorkspace,
+  previewProjectDocumentMigration,
+  type ProjectDocumentMigrationPreview
 } from "@smarchitect/core";
 import {
   useRef,
@@ -10,6 +12,7 @@ import {
 import {
   WorkspaceShell
 } from "./project/WorkspaceShell.js";
+import { SchemaMigrationDialog } from "./project/SchemaMigrationDialog.js";
 import type { ProjectRepository } from "./project-persistence.js";
 import { WelcomeScreen } from "./project/WelcomeScreen.js";
 import { useAutosavedProject } from "./use-autosaved-project.js";
@@ -23,6 +26,8 @@ export interface AppProps {
 export function App({ projectRepository }: AppProps = {}) {
   const [draftName, setDraftName] = useState("");
   const [operationError, setOperationError] = useState("");
+  const [migrationPreview, setMigrationPreview] =
+    useState<ProjectDocumentMigrationPreview>();
   const importInput = useRef<HTMLInputElement>(null);
   const library = useItemLibrary(setOperationError);
   const autosavedProject = useAutosavedProject(projectRepository);
@@ -86,7 +91,23 @@ export function App({ projectRepository }: AppProps = {}) {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const imported = ProjectWorkspace.importYaml(await file.text());
+      const source = await file.text();
+      let imported: ProjectWorkspace;
+      try {
+        imported = ProjectWorkspace.importYaml(source);
+      } catch (cause) {
+        if (
+          cause instanceof ProjectValidationError
+          && cause.diagnostics.some(
+            ({ code }) => code === "schema-version.migration-required"
+          )
+        ) {
+          setMigrationPreview(previewProjectDocumentMigration(source));
+          setOperationError("");
+          return;
+        }
+        throw cause;
+      }
       if (await startAutosave(imported)) setDraftName(imported.document.name);
     } catch (cause) {
       setOperationError(cause instanceof ProjectValidationError
@@ -97,22 +118,52 @@ export function App({ projectRepository }: AppProps = {}) {
     }
   }
 
+  async function confirmMigration(): Promise<void> {
+    if (!migrationPreview) return;
+    try {
+      const imported = ProjectWorkspace.importYaml(
+        migrationPreview.migratedSource
+      );
+      if (await startAutosave(imported)) {
+        setDraftName(imported.document.name);
+        setMigrationPreview(undefined);
+      }
+    } catch (cause) {
+      setOperationError(cause instanceof Error
+        ? cause.message
+        : "Unable to migrate project.");
+    }
+  }
+
+  const migrationDialog = migrationPreview ? (
+    <SchemaMigrationDialog
+      isSaving={isSaving}
+      preview={migrationPreview}
+      onCancel={() => setMigrationPreview(undefined)}
+      onConfirm={() => void confirmMigration()}
+    />
+  ) : null;
+
   if (!workspace) {
     return (
-      <WelcomeScreen
-        draftName={draftName}
-        error={error}
-        importInputRef={importInput}
-        isSaving={isSaving}
-        onCreate={() => void createProject()}
-        onDraftNameChange={setDraftName}
-        onImport={(event) => void importProject(event)}
-      />
+      <>
+        <WelcomeScreen
+          draftName={draftName}
+          error={error}
+          importInputRef={importInput}
+          isSaving={isSaving}
+          onCreate={() => void createProject()}
+          onDraftNameChange={setDraftName}
+          onImport={(event) => void importProject(event)}
+        />
+        {migrationDialog}
+      </>
     );
   }
 
   return (
-    <WorkspaceShell
+    <>
+      <WorkspaceShell
       canRedo={canRedo}
       canUndo={canUndo}
       error={error}
@@ -132,6 +183,8 @@ export function App({ projectRepository }: AppProps = {}) {
       onOperationError={setOperationError}
       onRenameProject={(value) => void renameProject(value)}
       onYamlChange={autosavedProject.editYaml}
-    />
+      />
+      {migrationDialog}
+    </>
   );
 }

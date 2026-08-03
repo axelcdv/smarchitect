@@ -803,3 +803,41 @@ h2 {
   white-space: nowrap;
   clip-path: inset(50%);
 }
+
+.migration-backdrop {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(32 41 35 / 72%);
+}
+
+.migration-dialog {
+  width: min(100%, 1000px);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border-radius: 8px;
+  background: #fffdf8;
+  padding: 28px;
+}
+
+.migration-sources {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 20px 0;
+}
+
+.migration-sources label {
+  display: grid;
+  gap: 8px;
+}
+
+.migration-sources textarea {
+  min-height: 280px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+}

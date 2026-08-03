@@ -5,7 +5,8 @@ describe("Project transaction history", () => {
   it("preserves authored YAML syntax and extensions across accepted edits and reloads", () => {
     const authored = `# Homeowner context stays with the document
 name: Authored home
-schemaVersion: 1.0.0
+schemaVersion: 1.1.0
+schemaDialect: https://json-schema.org/draft/2020-12/schema
 extensions:
   https://example.com/smarchitect/notes:
     reviewedBy: homeowner
@@ -42,7 +43,7 @@ activeLevelId: level_00000000-0000-4000-8000-000000000002
     expect(edited).toContain("name: Ground floor # custom level ordering");
     expect(edited).toContain("thicknessMm: 150 # measured on site");
     expect(edited.indexOf("name: Authored home"))
-      .toBeLessThan(edited.indexOf("schemaVersion: 1.0.0"));
+      .toBeLessThan(edited.indexOf("schemaVersion: 1.1.0"));
     expect(edited).toContain("finish: limewash");
     expect(edited).toContain("heightMm: 2800");
 

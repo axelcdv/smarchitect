@@ -1,0 +1,100 @@
+# golden project comment
+name: Golden authored project # project entity comment
+schemaVersion: 1.1.0
+schemaDialect: https://json-schema.org/draft/2020-12/schema
+extensions:
+  https://example.com/project:
+    customOrder: [third, first] # project extension comment
+id: project_00000000-0000-4000-8000-000000000001
+units: metric
+furnitureDefinitions:
+  - name: Authored table # furniture definition comment
+    id: furniture_definition_00000000-0000-4000-8000-000000000006
+    depthMm: 800
+    widthMm: 1600
+    heightMm: 740
+    extensions:
+      https://example.com/furniture: { finish: oak }
+fixtureDefinitions:
+  - name: Authored sink # fixture definition comment
+    id: fixture_definition_00000000-0000-4000-8000-000000000008
+    widthMm: 700
+    depthMm: 500
+    heightMm: 200
+    extensions:
+      https://example.com/fixture: { finish: ceramic }
+levels:
+  - name: Ground floor # level entity comment
+    id: level_00000000-0000-4000-8000-000000000002
+    walls:
+      - thicknessMm: 150 # wall entity comment
+        id: wall_00000000-0000-4000-8000-000000000003
+        path:
+          start: { x: 0, y: 0 }
+          kind: straight
+          end: { x: 4000, y: 0 }
+        extensions:
+          https://example.com/wall: { material: brick }
+        heightMm: 2500
+    roomLabels:
+      - name: Kitchen # room label entity comment
+        id: room-label_00000000-0000-4000-8000-000000000004
+        position: { x: 1000, y: 1000 }
+        extensions:
+          https://example.com/label: { confidence: surveyed }
+    openings:
+      - kind: door # opening entity comment
+        id: opening_00000000-0000-4000-8000-000000000005
+        hostWallId: wall_00000000-0000-4000-8000-000000000003
+        positionMm: 500
+        widthMm: 900
+        heightMm: 2100
+        operation: { kind: hinged, hingeSide: start, swingDirection: inward }
+        extensions:
+          https://example.com/opening: { fireRated: false }
+    furniturePlacements:
+      - id: furniture_placement_00000000-0000-4000-8000-000000000007 # furniture placement comment
+        definitionId: furniture_definition_00000000-0000-4000-8000-000000000006
+        position: { x: 1800, y: 1200 }
+        rotationDeg: 0
+        elevationMm: 0
+        extensions:
+          https://example.com/furniture-placement: { locked: false }
+    fixturePlacements:
+      - id: fixture_placement_00000000-0000-4000-8000-000000000009 # fixture placement comment
+        definitionId: fixture_definition_00000000-0000-4000-8000-000000000008
+        position: { x: 500, y: 800 }
+        rotationDeg: 90
+        elevationMm: 850
+        extensions:
+          https://example.com/fixture-placement: { plumbingZone: A }
+    defaultWallHeightMm: 2500
+    baseElevationMm: 0
+    extensions:
+      https://example.com/level: { source: laser-scan }
+activeLevelId: level_00000000-0000-4000-8000-000000000002
+existingStateRevision: 0
+existingStateRevisedAt: 2026-08-03T00:00:00.000Z
+activePlan: { kind: existing-state }
+designProposals:
+  - name: Authored alternative # design proposal entity comment
+    sourceRevision: 0
+    id: design_proposal_00000000-0000-4000-8000-000000000010
+    sourceRevisedAt: 2026-08-03T00:00:00.000Z
+    activeLevelId: level_00000000-0000-4000-8000-000000000011
+    furnitureDefinitions: []
+    fixtureDefinitions: []
+    levels:
+      - name: Proposal floor # proposal level entity comment
+        id: level_00000000-0000-4000-8000-000000000011
+        walls: []
+        roomLabels: []
+        openings: []
+        furniturePlacements: []
+        fixturePlacements: []
+        defaultWallHeightMm: 2400
+        baseElevationMm: 100
+        extensions:
+          https://example.com/proposal-level: { authoredOrder: preserved }
+    extensions:
+      https://example.com/proposal: { reviewStatus: authored }
