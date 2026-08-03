@@ -331,6 +331,7 @@ export type EntityKind =
   | "furniture_placement"
   | "fixture_definition"
   | "fixture_placement"
+  | "checkpoint"
   | "design_proposal";
 export type IdFactory = (kind: EntityKind) => string;
 

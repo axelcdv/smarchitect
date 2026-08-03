@@ -1,6 +1,9 @@
 import {
+  createCheckpoint as createProjectCheckpoint,
   ProjectHistory,
   ProjectWorkspace,
+  restoreCheckpoint as restoreProjectCheckpoint,
+  type CheckpointHistoryEntry,
   type FixtureDefinition,
   type FurnitureDefinition,
   type ProjectCheckpoint,
@@ -22,14 +25,6 @@ export interface PersistedProjectSnapshot extends ProjectHistorySnapshot {
   draft?: string;
   checkpoints?: ProjectCheckpoint[];
   checkpointHistory?: CheckpointHistoryEntry[];
-}
-
-export interface CheckpointHistoryEntry {
-  readonly kind: "checkpoint-created" | "checkpoint-restored";
-  readonly checkpointId: string;
-  readonly checkpointName: string;
-  readonly occurredAt: string;
-  readonly historyEntryIndex: number;
 }
 
 export interface ProjectRepository {
@@ -417,35 +412,21 @@ export class AutosavedProject {
   }
 
   async createCheckpoint(name: string): Promise<ProjectCheckpoint> {
-    const checkpointName = name.trim();
-    if (!checkpointName) throw new Error("Checkpoint name is required.");
     const operation = this.#pendingTransition.then(async () => {
-      const checkpoint: ProjectCheckpoint = {
-        id: `checkpoint_${crypto.randomUUID()}`,
-        name: checkpointName,
-        createdAt: new Date().toISOString(),
-        source: this.workspace.exportYaml()
-      };
-      const checkpoints = [...this.#checkpoints, checkpoint];
-      const checkpointHistory = [
-        ...this.#checkpointHistory,
-        {
-          kind: "checkpoint-created" as const,
-          checkpointId: checkpoint.id,
-          checkpointName: checkpoint.name,
-          occurredAt: checkpoint.createdAt,
-          historyEntryIndex: this.#history.snapshot().cursor
-        }
-      ];
+      const result = createProjectCheckpoint(this.#checkpointState(), name);
+      const history = ProjectHistory.restore(result.state.history);
       await this.#repository.save(this.#snapshot(
-        this.#history,
+        history,
         this.#draft,
-        checkpoints,
-        checkpointHistory
+        result.state.checkpoints,
+        result.state.checkpointHistory
       ));
-      this.#checkpoints = checkpoints;
-      this.#checkpointHistory = checkpointHistory;
-      return structuredClone(checkpoint);
+      this.#history = history;
+      this.#checkpoints = structuredClone([...result.state.checkpoints]);
+      this.#checkpointHistory = structuredClone([
+        ...result.state.checkpointHistory
+      ]);
+      return result.checkpoint;
     });
     this.#pendingTransition = operation.then(() => undefined, () => undefined);
     return operation;
@@ -453,29 +434,23 @@ export class AutosavedProject {
 
   async restoreCheckpoint(checkpointId: string): Promise<ProjectWorkspace> {
     const operation = this.#pendingTransition.then(async () => {
-      const checkpoint = this.#checkpoints.find(({ id }) => id === checkpointId);
-      if (!checkpoint) throw new Error("Checkpoint was not found.");
-      const history = ProjectHistory.restore(this.#history.snapshot());
-      history.restoreCheckpoint(checkpoint.source);
-      const checkpointHistory = [
-        ...this.#checkpointHistory,
-        {
-          kind: "checkpoint-restored" as const,
-          checkpointId: checkpoint.id,
-          checkpointName: checkpoint.name,
-          occurredAt: new Date().toISOString(),
-          historyEntryIndex: history.snapshot().cursor
-        }
-      ];
+      const result = restoreProjectCheckpoint(
+        this.#checkpointState(),
+        checkpointId
+      );
+      const history = ProjectHistory.restore(result.state.history);
       await this.#repository.save(this.#snapshot(
         history,
         CLEAR_PROJECT_DRAFT,
-        this.#checkpoints,
-        checkpointHistory
+        result.state.checkpoints,
+        result.state.checkpointHistory
       ));
       this.#history = history;
       this.#draft = undefined;
-      this.#checkpointHistory = checkpointHistory;
+      this.#checkpoints = structuredClone([...result.state.checkpoints]);
+      this.#checkpointHistory = structuredClone([
+        ...result.state.checkpointHistory
+      ]);
       return this.workspace;
     });
     this.#pendingTransition = operation.then(() => undefined, () => undefined);
@@ -528,6 +503,14 @@ export class AutosavedProject {
     });
   }
 
+  #checkpointState() {
+    return {
+      history: this.#history.snapshot(),
+      checkpoints: this.#checkpoints,
+      checkpointHistory: this.#checkpointHistory
+    };
+  }
+
   #enqueue(
     transition: (
       history: ProjectHistory
@@ -550,15 +533,17 @@ export class AutosavedProject {
   #snapshot(
     history = this.#history,
     draft: string | undefined | typeof CLEAR_PROJECT_DRAFT = this.#draft,
-    checkpoints = this.#checkpoints,
-    checkpointHistory = this.#checkpointHistory
+    checkpoints: readonly ProjectCheckpoint[] = this.#checkpoints,
+    checkpointHistory: readonly CheckpointHistoryEntry[] = this.#checkpointHistory
   ): PersistedProjectSnapshot {
     return {
       ...history.snapshot(),
       ...(draft === undefined || draft === CLEAR_PROJECT_DRAFT ? {} : { draft }),
-      ...(checkpoints.length ? { checkpoints: structuredClone(checkpoints) } : {}),
+      ...(checkpoints.length
+        ? { checkpoints: structuredClone([...checkpoints]) }
+        : {}),
       ...(checkpointHistory.length
-        ? { checkpointHistory: structuredClone(checkpointHistory) }
+        ? { checkpointHistory: structuredClone([...checkpointHistory]) }
         : {})
     };
   }

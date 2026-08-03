@@ -26,6 +26,15 @@ export {
   type ProjectHistorySnapshot
 } from "./project-history.js";
 export {
+  createCheckpoint,
+  restoreCheckpoint,
+  type CheckpointHistoryEntry,
+  type CreateCheckpointResult,
+  type ProjectCheckpointCommandOptions,
+  type ProjectCheckpointState,
+  type RestoreCheckpointResult
+} from "./project-checkpoint.js";
+export {
   exportProjectArchive,
   importProjectArchive,
   previewProjectArchiveMigration,
