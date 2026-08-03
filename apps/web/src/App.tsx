@@ -36,13 +36,16 @@ import {
 import { BufferedInput } from "./BufferedInput.js";
 import { useAutosavedProject } from "./use-autosaved-project.js";
 import { PlacementInspector } from "./PlacementInspector.js";
-import { ItemLibrary } from "./ItemLibrary.js";
 import { useItemLibrary } from "./use-item-library.js";
 import {
   createDefaultOpeningInput,
   OpeningProperties,
   OpeningSymbol
 } from "./OpeningEditor.js";
+import { ProjectDocumentPanel } from "./project/ProjectDocumentPanel.js";
+import { ProjectSidebar } from "./project/ProjectSidebar.js";
+import { WelcomeScreen } from "./project/WelcomeScreen.js";
+import { WorkspaceHeader } from "./project/WorkspaceHeader.js";
 import "./styles.css";
 
 type WallEditField =
@@ -54,21 +57,6 @@ function wallPolygonPoints(wall: Wall): string {
   return deriveWallFaces(wall)
     .map(({ x, y }) => `${x},${-y}`)
     .join(" ");
-}
-
-function downloadYaml(source: string, projectName: string): void {
-  const blob = new Blob([source], { type: "application/yaml" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  const safeName = projectName
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, "-")
-    .replaceAll(/^-|-$/g, "");
-
-  anchor.href = url;
-  anchor.download = `${safeName || "project"}.yaml`;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }
 
 function moveWallForDrag(
@@ -671,250 +659,74 @@ export function App() {
 
   if (!workspace || !document || !activePlan || !activeLevel) {
     return (
-      <main className="welcome-shell">
-        <section className="welcome-card" aria-labelledby="welcome-title">
-          <p className="eyebrow">Open home planning</p>
-          <h1 id="welcome-title">Shape the home you already know.</h1>
-          <p className="welcome-copy">
-            Start with one measured Level. Your plan stays local, readable, and
-            yours.
-          </p>
-          <label className="field">
-            <span>Project name</span>
-            <input
-              autoFocus
-              value={draftName}
-              disabled={isSaving}
-              onChange={(event) => setDraftName(event.target.value)}
-              placeholder="Our apartment"
-            />
-          </label>
-          <div className="welcome-actions">
-            <button
-              className="primary-button"
-              type="button"
-              disabled={isSaving || !draftName.trim()}
-              onClick={createProject}
-            >
-              Create project
-            </button>
-            <button
-              className="secondary-button"
-              type="button"
-              disabled={isSaving}
-              onClick={() => importInput.current?.click()}
-            >
-              Import YAML
-            </button>
-            <input
-              ref={importInput}
-              className="visually-hidden"
-              type="file"
-              accept=".yaml,.yml,application/yaml,text/yaml"
-              onChange={importProject}
-              aria-label="Import Project Document"
-            />
-          </div>
-          {error ? <p className="error-message">{error}</p> : null}
-          <p className="disclaimer">
-            Smarchitect supports early-stage space planning, not permit or
-            construction documentation.
-          </p>
-        </section>
-      </main>
+      <WelcomeScreen
+        draftName={draftName}
+        error={error}
+        importInputRef={importInput}
+        isSaving={isSaving}
+        onCreate={() => void createProject()}
+        onDraftNameChange={setDraftName}
+        onImport={(event) => void importProject(event)}
+      />
     );
   }
 
   return (
     <main className="workspace-shell">
-      <header className="workspace-header">
-        <div>
-          <p className="eyebrow">
-            {activeProposal ? "Design Proposal" : "Existing State"}
-          </p>
-          <h1>{document.name}</h1>
-        </div>
-        <div className="header-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={isSaving || !canUndo}
-            onClick={() => void navigateHistory("undo")}
-          >
-            Undo
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={isSaving || !canRedo}
-            onClick={() => void navigateHistory("redo")}
-          >
-            Redo
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => importInput.current?.click()}
-          >
-            Import YAML
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => downloadYaml(yaml, document.name)}
-          >
-            Export YAML
-          </button>
-          <input
-            ref={importInput}
-            className="visually-hidden"
-            type="file"
-            accept=".yaml,.yml,application/yaml,text/yaml"
-            onChange={importProject}
-            aria-label="Import Project Document"
-          />
-        </div>
-      </header>
+      <WorkspaceHeader
+        canRedo={canRedo}
+        canUndo={canUndo}
+        importInputRef={importInput}
+        isDesignProposal={Boolean(activeProposal)}
+        isSaving={isSaving}
+        onImport={(event) => void importProject(event)}
+        onNavigateHistory={(direction) => void navigateHistory(direction)}
+        projectName={document.name}
+        yaml={yaml}
+      />
 
       <section className="workspace-grid">
-        <aside className="project-panel" aria-label="Project properties">
-          <label className="field">
-            <span>Rename project</span>
-            <BufferedInput
-              aria-label="Rename project"
-              disabled={isSaving}
-              value={document.name}
-              onCommit={(value) => void renameProject(value)}
-            />
-          </label>
-          <section className="proposal-manager" aria-labelledby="proposal-title">
-            <div className="proposal-heading">
-              <h2 id="proposal-title">Plans</h2>
-              <span>{document.designProposals?.length ?? 0} proposals</span>
-            </div>
-            <button
-              type="button"
-              className={activeProposal ? "proposal-option" : "proposal-option active"}
-              disabled={isSaving}
-              onClick={() => void changeActivePlan(workspace.selectExistingState())}
-            >
-              <strong>Existing State</strong>
-              <small>Revision {document.existingStateRevision ?? 0}</small>
-            </button>
-            {(document.designProposals ?? []).map((proposal) => (
-              <button
-                type="button"
-                key={proposal.id}
-                className={activeProposal?.id === proposal.id
-                  ? "proposal-option active"
-                  : "proposal-option"}
-                disabled={isSaving}
-                onClick={() =>
-                  void changeActivePlan(workspace.selectDesignProposal(proposal.id))}
-              >
-                <strong>{proposal.name}</strong>
-                <small>From revision {proposal.sourceRevision}</small>
-              </button>
-            ))}
-            <div className="proposal-create">
-              <input
-                aria-label="New Design Proposal name"
-                value={proposalName}
-                disabled={isSaving}
-                placeholder="Proposal name"
-                onChange={(event) => setProposalName(event.target.value)}
-              />
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={isSaving || !proposalName.trim()}
-                onClick={() => {
-                  void changeActivePlan(
-                    workspace.createDesignProposal(proposalName)
-                  ).then(() => setProposalName(""));
-                }}
-              >
-                Create from Existing State
-              </button>
-            </div>
-            {activeProposal ? (
-              <div className="active-proposal-actions">
-                <label className="field">
-                  <span>Rename Design Proposal</span>
-                  <input
-                    aria-label="Rename Design Proposal"
-                    disabled={isSaving}
-                    value={activeProposal.name}
-                    onChange={(event) =>
-                      void commit(workspace.renameDesignProposal(
-                        activeProposal.id,
-                        event.target.value
-                      ))}
-                  />
-                </label>
-                <button
-                  type="button"
-                  className="danger-button"
-                  disabled={isSaving}
-                  onClick={() =>
-                    void changeActivePlan(
-                      workspace.deleteDesignProposal(activeProposal.id)
-                    )}
-                >
-                  Delete Design Proposal
-                </button>
-              </div>
-            ) : null}
-            {proposalStaleness?.stale ? (
-              <p className="proposal-stale" role="status">
-                This proposal is stale. It was cloned from Existing State
-                revision {proposalStaleness.sourceRevision} on{" "}
-                {new Date(proposalStaleness.sourceRevisedAt).toLocaleString()}.
-                Existing State is now revision {proposalStaleness.currentRevision},
-                revised{" "}
-                {new Date(proposalStaleness.currentRevisedAt).toLocaleString()}.
-              </p>
-            ) : null}
-          </section>
-          <div className="level-card">
-            <span className="level-index">01</span>
-            <div>
-              <strong>{activeLevel.name}</strong>
-              <small>
-                {activeLevel.defaultWallHeightMm / 1000} m default wall height
-              </small>
-            </div>
-          </div>
-          <ItemLibrary
-            controller={library}
-            disabled={isSaving || library.isSaving}
-            onPlace={(kind, definitionId) => {
-              setPlacingItem({ kind, definitionId });
-              setMode("placeItem");
-            }}
-          />
-          <dl className="project-facts">
-            <div>
-              <dt>Units</dt>
-              <dd>Metric</dd>
-            </div>
-            <div>
-              <dt>Schema</dt>
-              <dd>{document.schemaVersion}</dd>
-            </div>
-            <div>
-              <dt>Validation</dt>
-              <dd className={diagnostics.length ? "status-error" : "status-valid"}>
-                {diagnostics.length ? "Needs attention" : "Valid"}
-              </dd>
-            </div>
-          </dl>
-          {error ? <p className="error-message">{error}</p> : null}
-          <p className="panel-note">
-            For early-stage space planning only. Consult qualified professionals
-            before construction.
-          </p>
-        </aside>
+        <ProjectSidebar
+          activeLevel={activeLevel}
+          activeProposal={activeProposal}
+          diagnostics={diagnostics}
+          document={document}
+          error={error}
+          isSaving={isSaving}
+          library={library}
+          onCreateProposal={() => {
+            void changeActivePlan(
+              workspace.createDesignProposal(proposalName)
+            ).then(() => setProposalName(""));
+          }}
+          onDeleteProposal={() => {
+            if (activeProposal) {
+              void changeActivePlan(
+                workspace.deleteDesignProposal(activeProposal.id)
+              );
+            }
+          }}
+          onPlaceItem={(kind, definitionId) => {
+            setPlacingItem({ kind, definitionId });
+            setMode("placeItem");
+          }}
+          onProposalNameChange={setProposalName}
+          onRenameProject={(value) => void renameProject(value)}
+          onRenameProposal={(value) => {
+            if (activeProposal) {
+              void commit(workspace.renameDesignProposal(
+                activeProposal.id,
+                value
+              ));
+            }
+          }}
+          onSelectExistingState={() =>
+            void changeActivePlan(workspace.selectExistingState())}
+          onSelectProposal={(proposalId) =>
+            void changeActivePlan(workspace.selectDesignProposal(proposalId))}
+          proposalName={proposalName}
+          proposalStaleness={proposalStaleness}
+        />
 
         <section className="plan-panel" aria-labelledby="plan-title">
           <div className="panel-heading">
@@ -1244,21 +1056,7 @@ export function App() {
           ) : null}
         </section>
 
-        <section className="yaml-panel" aria-labelledby="yaml-title">
-          <div className="panel-heading">
-            <div>
-              <p className="eyebrow">Source of truth</p>
-              <h2 id="yaml-title">Project Document</h2>
-            </div>
-            <span className="valid-chip">Valid YAML</span>
-          </div>
-          <textarea
-            aria-label="Project Document YAML"
-            value={yaml}
-            readOnly
-            spellCheck={false}
-          />
-        </section>
+        <ProjectDocumentPanel yaml={yaml} />
       </section>
     </main>
   );
