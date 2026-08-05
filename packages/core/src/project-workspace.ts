@@ -39,8 +39,9 @@ import {
   validateProjectDocument
 } from "./validation.js";
 import { normalizeAngleDeg } from "./wall-geometry.js";
-import { deriveRooms, findRoomContainingPoint } from "./room-geometry.js";
+import { deriveRooms } from "./room-geometry.js";
 import { wallPathLength } from "./opening-geometry.js";
+import { designDiagnostics } from "./design-diagnostics.js";
 
 const DEFAULT_LEVEL_NAME = "Ground floor";
 const DEFAULT_WALL_HEIGHT_MM = 2500;
@@ -367,6 +368,8 @@ export class ProjectValidationError extends Error {
 
 export class ProjectWorkspace {
   #document: ProjectDocument;
+  #diagnostics?: Diagnostic[];
+  #activeDiagnostics?: Diagnostic[];
   #idFactory: IdFactory;
   #source: string;
   #now: () => Date;
@@ -438,40 +441,39 @@ export class ProjectWorkspace {
   }
 
   get diagnostics(): Diagnostic[] {
+    if (this.#diagnostics) return structuredClone(this.#diagnostics);
     const diagnostics = validateProjectDocument(this.#document);
+    const plans: Array<{ plan: PlanSnapshot; pathPrefix: string }> = [
+      { plan: this.#document, pathPrefix: "" },
+      ...(this.#document.designProposals ?? []).map((plan, index) => ({
+        plan,
+        pathPrefix: `/designProposals/${index}`
+      }))
+    ];
+    for (const { plan, pathPrefix } of plans) {
+      for (const [levelIndex, level] of plan.levels.entries()) {
+        diagnostics.push(...designDiagnostics(
+          level,
+          plan.furnitureDefinitions ?? [],
+          plan.fixtureDefinitions ?? [],
+          { pathPrefix, levelIndex }
+        ));
+      }
+    }
+    this.#diagnostics = diagnostics;
+    return structuredClone(diagnostics);
+  }
+
+  get activeDiagnostics(): Diagnostic[] {
+    if (this.#activeDiagnostics) return structuredClone(this.#activeDiagnostics);
     const plan = selectedPlan(this.#document);
     const planPath = selectedPlanPath(this.#document);
-    const levelIndex = plan.levels.findIndex(
-      ({ id }) => id === plan.activeLevelId
+    const levelIndex = plan.levels.findIndex(({ id }) => id === plan.activeLevelId);
+    const levelPath = `${planPath}/levels/${levelIndex}`;
+    this.#activeDiagnostics = this.diagnostics.filter((diagnostic) =>
+      diagnostic.severity === "error" || diagnostic.path.startsWith(`${levelPath}/`)
     );
-    const level = plan.levels[levelIndex];
-    if (!level) return diagnostics;
-    const rooms = deriveRooms(level.walls, level.roomLabels);
-    for (const [labelIndex, label] of level.roomLabels.entries()) {
-      if (!findRoomContainingPoint(label.position, rooms)) {
-        diagnostics.push({
-          code: "room-label.outside-room",
-          severity: "warning",
-          path: `${planPath}/levels/${levelIndex}/roomLabels/${labelIndex}/position`,
-          message: `Room Label "${label.name}" is outside every enclosed Room. Move it inside a Room or delete it.`
-        });
-      }
-    }
-    for (const room of rooms) {
-      if (room.labelIds.length > 1) {
-        const names = level.roomLabels
-          .filter(({ id }) => room.labelIds.includes(id))
-          .map(({ name }) => `"${name}"`)
-          .join(", ");
-        diagnostics.push({
-          code: "room-label.merge-conflict",
-          severity: "warning",
-          path: `${planPath}/levels/${levelIndex}/roomLabels`,
-          message: `Merged Room contains multiple labels (${names}). Move or delete labels to choose one explicitly.`
-        });
-      }
-    }
-    return diagnostics;
+    return structuredClone(this.#activeDiagnostics);
   }
 
   get rooms(): Room[] {
@@ -610,6 +612,39 @@ export class ProjectWorkspace {
     }
     const candidate = cloneProjectDocument(this.#document);
     candidate.activePlan = { kind: "design-proposal", proposalId: id };
+    return this.#acceptCandidate(candidate);
+  }
+
+  navigateToDiagnostic(diagnostic: Diagnostic): ProjectWorkspace {
+    const proposalMatch = diagnostic.path.match(
+      /^\/designProposals\/(\d+)\/levels\/(\d+)(?:\/|$)/
+    );
+    const existingStateMatch = diagnostic.path.match(/^\/levels\/(\d+)(?:\/|$)/);
+    const candidate = cloneProjectDocument(this.#document);
+    let plan: PlanSnapshot;
+    let levelIndex: number;
+
+    if (proposalMatch) {
+      const proposalIndex = Number(proposalMatch[1]);
+      levelIndex = Number(proposalMatch[2]);
+      const proposal = candidate.designProposals?.[proposalIndex];
+      if (!proposal) throw new Error("The diagnostic Design Proposal is missing.");
+      candidate.activePlan = {
+        kind: "design-proposal",
+        proposalId: proposal.id
+      };
+      plan = proposal;
+    } else if (existingStateMatch) {
+      levelIndex = Number(existingStateMatch[1]);
+      candidate.activePlan = { kind: "existing-state" };
+      plan = candidate;
+    } else {
+      throw new Error("The diagnostic does not identify a Plan Level.");
+    }
+
+    const level = plan.levels[levelIndex];
+    if (!level) throw new Error("The diagnostic Level is missing.");
+    plan.activeLevelId = level.id;
     return this.#acceptCandidate(candidate);
   }
 

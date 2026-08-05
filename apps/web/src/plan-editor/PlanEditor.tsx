@@ -1,5 +1,6 @@
 import {
   ProjectValidationError,
+  type Diagnostic,
   type FixtureDefinitionUpdate,
   type FixturePlacementUpdate,
   type FurnitureDefinitionUpdate,
@@ -60,6 +61,10 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
     const activePlan = workspace.activePlan;
     const activeLevel = workspace.activeLevel;
     const diagnostics = workspace.diagnostics;
+    const warnings = diagnostics.filter(({ severity }) => severity === "warning");
+    const warningIds = new Set(workspace.activeDiagnostics
+      .filter(({ severity }) => severity === "warning")
+      .flatMap(({ affectedIds }) => affectedIds ?? []));
     const walls = activeLevel.walls;
     const roomLabels = activeLevel.roomLabels;
     const openings = activeLevel.openings;
@@ -134,6 +139,40 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
       clearSelection();
       setOpeningConflict(undefined);
       resetInteraction();
+    }
+
+    async function focusWarning(diagnostic: Diagnostic): Promise<void> {
+      const focus = diagnostic.focus;
+      if (!focus) return;
+      let focusedWorkspace = workspace;
+      if (!workspace.activeDiagnostics.some(
+        ({ code, path }) => code === diagnostic.code && path === diagnostic.path
+      )) {
+        const durable = await onCommit(workspace.navigateToDiagnostic(diagnostic));
+        if (!durable) return;
+        focusedWorkspace = durable;
+      }
+      switch (focus.kind) {
+        case "wall":
+          selectWall(focus.id);
+          break;
+        case "opening": {
+          const opening = focusedWorkspace.activeLevel.openings.find(
+            ({ id }) => id === focus.id
+          );
+          if (opening) selectOpening(opening.id, opening.hostWallId);
+          break;
+        }
+        case "room-label":
+          selectRoomLabel(focus.id);
+          break;
+        case "furniture":
+          selectFurniture(focus.id);
+          break;
+        case "fixture":
+          selectFixture(focus.id);
+          break;
+      }
     }
 
     useImperativeHandle(ref, () => ({
@@ -331,6 +370,41 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
           onPan={pan}
           onZoom={zoom}
         />
+        {warnings.length ? (
+          <section className="design-warnings" aria-labelledby="design-warnings-title">
+            <div>
+              <h3 id="design-warnings-title">Design warnings</h3>
+              <p>
+                Advisory space-planning guidance only. Warnings do not block
+                editing, autosave, YAML Apply, checkpoints, or export, and are
+                not professional structural advice.
+              </p>
+            </div>
+            <ul>
+              {warnings.map((warning, index) => (
+                <li key={`${warning.code}:${warning.path}:${index}`}>
+                  <div>
+                    <code>{warning.code}</code>
+                    <p>{warning.message}</p>
+                    {warning.affectedIds?.length ? (
+                      <small>Affected IDs: {warning.affectedIds.join(", ")}</small>
+                    ) : null}
+                  </div>
+                  {warning.focus ? (
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      aria-label={`Focus warning ${warning.code}`}
+                      onClick={() => void focusWarning(warning)}
+                    >
+                      Focus in plan
+                    </button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
         <PlanCanvas
           levelName={activeLevel.name}
           view={view}
@@ -343,6 +417,7 @@ export const PlanEditor = forwardRef<PlanEditorHandle, PlanEditorProps>(
           furniturePlacements={furniturePlacements}
           fixtureDefinitions={activePlan.fixtureDefinitions ?? []}
           fixturePlacements={fixturePlacements}
+          warningIds={warningIds}
           selection={selection}
           onPointerDown={(event) => void beginPlanGesture(event)}
           onPointerMove={previewPlanGesture}

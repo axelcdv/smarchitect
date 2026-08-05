@@ -61,6 +61,8 @@ export function ProjectSidebar({
   proposalName,
   proposalStaleness
 }: ProjectSidebarProps) {
+  const errorCount = diagnostics.filter(({ severity }) => severity === "error").length;
+  const warningCount = diagnostics.filter(({ severity }) => severity === "warning").length;
   const [checkpointName, setCheckpointName] = useState("");
   return (
     <aside className="project-panel" aria-label="Project properties">
@@ -225,8 +227,15 @@ export function ProjectSidebar({
         </div>
         <div>
           <dt>Validation</dt>
-          <dd className={diagnostics.length ? "status-error" : "status-valid"}>
-            {diagnostics.length ? "Needs attention" : "Valid"}
+          <dd className={errorCount
+            ? "status-error"
+            : warningCount ? "status-warning" : "status-valid"}
+          >
+            {errorCount
+              ? `${errorCount} document error${errorCount === 1 ? "" : "s"}`
+              : warningCount
+                ? `Valid · ${warningCount} advisory warning${warningCount === 1 ? "" : "s"}`
+                : "Valid"}
           </dd>
         </div>
       </dl>

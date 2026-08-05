@@ -37,6 +37,56 @@ function outputCollector(): {
 }
 
 describe("smarchitect validate", () => {
+  it("reports shared design warnings without failing validation", async () => {
+    const ids = [
+      "project_00000000-0000-4000-8000-000000000001",
+      "level_00000000-0000-4000-8000-000000000002",
+      "wall_00000000-0000-4000-8000-000000000003",
+      "furniture_placement_00000000-0000-4000-8000-000000000004",
+      "design_proposal_00000000-0000-4000-8000-000000000005"
+    ];
+    const definition = {
+      id: "furniture_definition_00000000-0000-4000-8000-000000000100",
+      name: "Table",
+      widthMm: 1000,
+      depthMm: 1000,
+      heightMm: 750,
+      extensions: {}
+    };
+    const activeWarning = ProjectWorkspace.create("CLI warnings", {
+      idFactory: () => ids.shift()!
+    }).addWall({
+      start: { x: 0, y: 0 },
+      end: { x: 4000, y: 0 }
+    }).placeFurniture(definition, { position: { x: 500, y: 0 } });
+    const placementId = activeWarning.activeLevel.furniturePlacements![0]!.id;
+    const workspace = activeWarning
+      .createDesignProposal("Warning alternative")
+      .selectExistingState()
+      .updateFurniturePlacement(placementId, { position: { x: 500, y: 1500 } });
+    const stdout = outputCollector();
+    const stderr = outputCollector();
+
+    const exitCode = await runCli(["validate", "-"], {
+      readFile: async () => "",
+      readStdin: async () => workspace.exportYaml(),
+      stdout: stdout.write,
+      stderr: stderr.write
+    });
+
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout.values.join(""))).toEqual({
+      ok: true,
+      valid: true,
+      diagnostics: workspace.diagnostics
+    });
+    expect(workspace.diagnostics).toContainEqual(expect.objectContaining({
+      code: "placement.wall-overlap",
+      path: "/designProposals/0/levels/0/furniturePlacements/0/position"
+    }));
+    expect(stderr.values).toEqual([]);
+  });
+
   it("validates golden authored syntax after entity-oriented edits", async () => {
     const source = readFileSync(new URL(
       "../../../packages/core/src/fixtures/authored-project-1.1.0.yaml",
@@ -74,7 +124,7 @@ describe("smarchitect validate", () => {
     expect(JSON.parse(stdout.values.join(""))).toEqual({
       ok: true,
       valid: true,
-      diagnostics: []
+      diagnostics: edited.diagnostics
     });
     expect(stderr.values).toEqual([]);
   });
