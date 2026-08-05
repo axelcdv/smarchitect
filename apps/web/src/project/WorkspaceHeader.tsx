@@ -100,6 +100,9 @@ export function WorkspaceHeader({
         {writerState === "unsupported" ? "Editing (browser lock unavailable)" : null}
         {storagePersistence === "persistent" ? " · Storage protected" : null}
         {storagePersistence === "temporary" ? " · Storage may be cleared" : null}
+        {storagePersistence === "unavailable"
+          ? " · Storage protection unavailable; export archives regularly"
+          : null}
       </div>
     </header>
   );

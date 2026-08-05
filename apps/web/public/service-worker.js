@@ -1,7 +1,9 @@
 const CACHE = "smarchitect-shell-v1";
+// Vite replaces this list with every hashed JS/CSS asset in production builds.
+const PRECACHE = ["./", "./index.html"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(["./", "./index.html"])));
+  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)));
   self.skipWaiting();
 });
 
