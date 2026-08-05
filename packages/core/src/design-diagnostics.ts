@@ -187,6 +187,7 @@ function wallGeometries(level: Level): WallGeometry[] {
 
 function doorClearanceFootprint(level: Level, openingIndex: number): PointMm[] {
   const door = level.openings[openingIndex]!;
+  if (door.kind !== "door") throw new Error("Door clearance requires a Door Opening.");
   const wall = level.walls.find(({ id }) => id === door.hostWallId)!;
   const dx = wall.path.end.x - wall.path.start.x;
   const dy = wall.path.end.y - wall.path.start.y;
@@ -201,12 +202,39 @@ function doorClearanceFootprint(level: Level, openingIndex: number): PointMm[] {
     x: start.x + unit.x * door.widthMm,
     y: start.y + unit.y * door.widthMm
   };
-  return [
-    { x: start.x + normal.x * door.widthMm, y: start.y + normal.y * door.widthMm },
-    { x: end.x + normal.x * door.widthMm, y: end.y + normal.y * door.widthMm },
-    { x: end.x - normal.x * door.widthMm, y: end.y - normal.y * door.widthMm },
-    { x: start.x - normal.x * door.widthMm, y: start.y - normal.y * door.widthMm }
-  ];
+  if (door.operation.kind === "sliding") {
+    // Sliding panels do not sweep into a room. Keep a small, two-sided
+    // approach zone at the doorway so an item at the threshold is still noted.
+    const accessDepthMm = 300;
+    return [
+      { x: start.x + normal.x * accessDepthMm, y: start.y + normal.y * accessDepthMm },
+      { x: end.x + normal.x * accessDepthMm, y: end.y + normal.y * accessDepthMm },
+      { x: end.x - normal.x * accessDepthMm, y: end.y - normal.y * accessDepthMm },
+      { x: start.x - normal.x * accessDepthMm, y: start.y - normal.y * accessDepthMm }
+    ];
+  }
+
+  const hinge = door.operation.hingeSide === "start" ? start : end;
+  const closedLeaf = door.operation.hingeSide === "start"
+    ? unit
+    : { x: -unit.x, y: -unit.y };
+  const swingScale = door.operation.swingDirection === "inward" ? 1 : -1;
+  const openLeaf = { x: normal.x * swingScale, y: normal.y * swingScale };
+  const startAngle = Math.atan2(closedLeaf.y, closedLeaf.x);
+  const rotatesCounterclockwise = closedLeaf.x * openLeaf.y
+    - closedLeaf.y * openLeaf.x > 0;
+  const angleStep = (rotatesCounterclockwise ? 1 : -1) * Math.PI / 8;
+
+  // A five-segment sector follows the hinged leaf from its closed position to
+  // its open position. The hinge side selects the pivot; swing direction
+  // selects the side of the host Wall that can be obstructed.
+  return [hinge, ...Array.from({ length: 5 }, (_, index) => {
+    const angle = startAngle + angleStep * index;
+    return {
+      x: hinge.x + Math.cos(angle) * door.widthMm,
+      y: hinge.y + Math.sin(angle) * door.widthMm
+    };
+  })];
 }
 
 function openWallComponents(level: Level): number[][] {

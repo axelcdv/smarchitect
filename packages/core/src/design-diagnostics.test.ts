@@ -96,7 +96,53 @@ describe("advisory design diagnostics", () => {
     expect(() => ProjectWorkspace.importYaml(workspace.exportYaml())).not.toThrow();
   });
 
-  it("reports non-host Walls that block a Door clearance footprint", () => {
+  it("checks hinged Door clearance only on its configured swing side", () => {
+    const workspaceFor = (swingDirection: "inward" | "outward", y: number) => {
+      let workspace = ProjectWorkspace.create("Door swing", { idFactory: ids() })
+        .addWall({ start: { x: 0, y: 0 }, end: { x: 4000, y: 0 } });
+      return workspace.addOpening({
+        kind: "door",
+        hostWallId: workspace.activeLevel.walls[0]!.id,
+        positionMm: 1000,
+        widthMm: 900,
+        heightMm: 2100,
+        operation: { kind: "hinged", hingeSide: "end", swingDirection }
+      }).placeFurniture(table, { position: { x: 1450, y } });
+    };
+
+    expect(workspaceFor("inward", 1000).diagnostics).toContainEqual(
+      expect.objectContaining({ code: "door.obstructed" })
+    );
+    expect(workspaceFor("inward", -1000).diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "door.obstructed" })
+    );
+    expect(workspaceFor("outward", -1000).diagnostics).toContainEqual(
+      expect.objectContaining({ code: "door.obstructed" })
+    );
+    expect(workspaceFor("outward", 1000).diagnostics).not.toContainEqual(
+      expect.objectContaining({ code: "door.obstructed" })
+    );
+  });
+
+  it("uses a doorway access zone instead of a swing envelope for sliding Doors", () => {
+    let workspace = ProjectWorkspace.create("Sliding Door", { idFactory: ids() })
+      .addWall({ start: { x: 0, y: 0 }, end: { x: 4000, y: 0 } });
+    workspace = workspace.addOpening({
+      kind: "door",
+      hostWallId: workspace.activeLevel.walls[0]!.id,
+      positionMm: 1000,
+      widthMm: 900,
+      heightMm: 2100,
+      operation: { kind: "sliding", slideDirection: "end" }
+    });
+
+    expect(workspace.placeFurniture(table, { position: { x: 1450, y: 1000 } }).diagnostics)
+      .not.toContainEqual(expect.objectContaining({ code: "door.obstructed" }));
+    expect(workspace.placeFurniture(table, { position: { x: 1450, y: 100 } }).diagnostics)
+      .toContainEqual(expect.objectContaining({ code: "door.obstructed" }));
+  });
+
+  it("reports non-host Walls that block a Door clearance footprint on its swing side", () => {
     let workspace = ProjectWorkspace.create("Wall-blocked Door", { idFactory: ids() })
       .addWall({ start: { x: 0, y: 0 }, end: { x: 4000, y: 0 } });
     const hostWallId = workspace.activeLevel.walls[0]!.id;
@@ -116,12 +162,12 @@ describe("advisory design diagnostics", () => {
         }
       });
     const door = workspace.activeLevel.openings[0]!;
-    const blockingWallIds = workspace.activeLevel.walls.slice(1).map(({ id }) => id);
+    const [blockingWall] = workspace.activeLevel.walls.slice(1);
 
     expect(workspace.diagnostics.filter(({ code }) => code === "door.obstructed"))
-      .toEqual(blockingWallIds.map((wallId) => expect.objectContaining({
-        affectedIds: [door.id, wallId]
-      })));
+      .toEqual([expect.objectContaining({
+        affectedIds: [door.id, blockingWall!.id]
+      })]);
   });
 
   it("does not report a Door obstructed by a Placement entirely below the floor", () => {
