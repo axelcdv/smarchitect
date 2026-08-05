@@ -4,6 +4,7 @@ interface ProjectDocumentPanelProps {
   diagnostics: Diagnostic[];
   hasDraft: boolean;
   isSaving: boolean;
+  isReadOnly: boolean;
   yaml: string;
   onApply(): void;
   onChange(value: string): void;
@@ -13,6 +14,7 @@ export function ProjectDocumentPanel({
   diagnostics,
   hasDraft,
   isSaving,
+  isReadOnly,
   yaml,
   onApply,
   onChange
@@ -32,13 +34,14 @@ export function ProjectDocumentPanel({
         aria-label="Project Document YAML"
         value={yaml}
         spellCheck={false}
+        readOnly={isReadOnly}
         onChange={(event) => onChange(event.target.value)}
       />
       <div className="yaml-actions">
         <button
           type="button"
           className="primary-button"
-          disabled={!hasDraft || isSaving}
+          disabled={!hasDraft || isSaving || isReadOnly}
           onClick={onApply}
         >
           Apply YAML

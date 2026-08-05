@@ -1,0 +1,9 @@
+{
+  "name": "Smarchitect",
+  "short_name": "Smarchitect",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#eeeae0",
+  "theme_color": "#d9573f",
+  "description": "Open, local-first plans for early-stage home remodeling."
+}

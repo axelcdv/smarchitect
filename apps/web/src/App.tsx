@@ -22,6 +22,8 @@ import type { ProjectRepository } from "./project-persistence.js";
 import { WelcomeScreen } from "./project/WelcomeScreen.js";
 import { useAutosavedProject } from "./use-autosaved-project.js";
 import { useItemLibrary } from "./use-item-library.js";
+import { useProjectWriter } from "./project-writer.js";
+import { usePersistentStorage } from "./storage-persistence.js";
 import "./styles.css";
 
 export interface AppProps {
@@ -50,11 +52,20 @@ export function App({ projectRepository }: AppProps = {}) {
     checkpoints,
     isTransitionPending
   } = autosavedProject;
+  const writer = useProjectWriter(
+    workspace?.document.id,
+    autosavedProject.flushAutosave
+  );
+  const storagePersistence = usePersistentStorage(Boolean(workspace));
   const error = persistenceError || operationError;
 
   async function commit(
     next: ProjectWorkspace
   ): Promise<ProjectWorkspace | undefined> {
+    if (!writer.canWrite) {
+      setOperationError("This project is open read-only in this tab.");
+      return undefined;
+    }
     const durable = await autosavedProject.commit(next);
     if (durable) setOperationError("");
     return durable;
@@ -64,15 +75,40 @@ export function App({ projectRepository }: AppProps = {}) {
     next: ProjectWorkspace,
     importedCheckpoints: readonly ProjectCheckpoint[] = []
   ): Promise<boolean> {
+    if (workspace && !writer.canWrite) {
+      setOperationError("This project is open read-only in this tab.");
+      return false;
+    }
     const started = await autosavedProject.startAutosave(next, importedCheckpoints);
     if (started) setOperationError("");
     return started;
   }
 
   async function navigateHistory(direction: "undo" | "redo"): Promise<boolean> {
+    if (!writer.canWrite) return false;
     const restored = await autosavedProject.navigateHistory(direction);
     if (restored) setOperationError("");
     return restored !== undefined;
+  }
+
+  function editYaml(value: string): void {
+    if (!writer.canWrite) return;
+    autosavedProject.editYaml(value);
+  }
+
+  function applyYaml(): void {
+    if (!writer.canWrite) return;
+    void autosavedProject.applyYaml();
+  }
+
+  async function createCheckpoint(name: string): Promise<boolean> {
+    return writer.canWrite ? autosavedProject.createCheckpoint(name) : false;
+  }
+
+  async function restoreCheckpoint(checkpointId: string): Promise<boolean> {
+    return writer.canWrite
+      ? autosavedProject.restoreCheckpoint(checkpointId)
+      : false;
   }
 
   async function createProject(): Promise<void> {
@@ -223,20 +259,24 @@ export function App({ projectRepository }: AppProps = {}) {
       importInputRef={importInput}
       isSaving={isSaving}
       hasYamlDraft={hasYamlDraft}
+      isWriterLocked={!writer.canWrite}
+      writerState={writer.state}
+      storagePersistence={storagePersistence}
+      onTakeOver={writer.takeOver}
       isTransitionPending={isTransitionPending}
       library={library}
       workspace={workspace}
       yaml={yaml}
       yamlDiagnostics={yamlDiagnostics}
-      onApplyYaml={() => void autosavedProject.applyYaml()}
+      onApplyYaml={applyYaml}
       onCommit={commit}
-      onCreateCheckpoint={autosavedProject.createCheckpoint}
+      onCreateCheckpoint={createCheckpoint}
       onImport={(event) => void importProject(event)}
       onNavigateHistory={navigateHistory}
       onOperationError={setOperationError}
       onRenameProject={(value) => void renameProject(value)}
-      onRestoreCheckpoint={autosavedProject.restoreCheckpoint}
-      onYamlChange={autosavedProject.editYaml}
+      onRestoreCheckpoint={restoreCheckpoint}
+      onYamlChange={editYaml}
       />
       {migrationDialog}
       {archiveMigrationDialog}

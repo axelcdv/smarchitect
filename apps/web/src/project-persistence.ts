@@ -411,6 +411,11 @@ export class AutosavedProject {
     return structuredClone(this.#checkpointHistory);
   }
 
+  /** Wait for queued IndexedDB writes before a writer yields its Web Lock. */
+  async flush(): Promise<void> {
+    await this.#pendingTransition;
+  }
+
   async createCheckpoint(name: string): Promise<ProjectCheckpoint> {
     const operation = this.#pendingTransition.then(async () => {
       const result = createProjectCheckpoint(this.#checkpointState(), name);
