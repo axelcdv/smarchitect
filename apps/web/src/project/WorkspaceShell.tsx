@@ -25,6 +25,9 @@ export interface WorkspaceShellProps {
   operationError: string;
   isSaving: boolean;
   hasYamlDraft: boolean;
+  isWriterLocked: boolean;
+  writerState: "acquiring" | "writer" | "readonly" | "unsupported";
+  storagePersistence: "checking" | "persistent" | "temporary" | "unavailable";
   canUndo: boolean;
   canRedo: boolean;
   importInputRef: RefObject<HTMLInputElement | null>;
@@ -34,6 +37,7 @@ export interface WorkspaceShellProps {
   onCommit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined>;
   onCreateCheckpoint(name: string): Promise<boolean>;
   onApplyYaml(): void;
+  onTakeOver(): void;
   onImport(event: ChangeEvent<HTMLInputElement>): void;
   onNavigateHistory(direction: "undo" | "redo"): Promise<boolean>;
   onOperationError(message: string): void;
@@ -50,6 +54,9 @@ export function WorkspaceShell({
   operationError,
   isSaving,
   hasYamlDraft,
+  isWriterLocked,
+  writerState,
+  storagePersistence,
   canUndo,
   canRedo,
   importInputRef,
@@ -59,6 +66,7 @@ export function WorkspaceShell({
   onCommit,
   onCreateCheckpoint,
   onApplyYaml,
+  onTakeOver,
   onImport,
   onNavigateHistory,
   onOperationError,
@@ -70,6 +78,7 @@ export function WorkspaceShell({
   const [proposalName, setProposalName] = useState("");
   const planEditor = useRef<PlanEditorHandle>(null);
   const activeProposal = workspace.activeDesignProposal;
+  const isEditingLocked = hasYamlDraft || isWriterLocked;
 
   async function changeActivePlan(next: ProjectWorkspace): Promise<void> {
     if (await onCommit(next)) planEditor.current?.clearSelection();
@@ -84,7 +93,10 @@ export function WorkspaceShell({
         importInputRef={importInputRef}
         isDesignProposal={Boolean(activeProposal)}
         isSaving={isSaving}
-        isEditingLocked={hasYamlDraft}
+        isEditingLocked={isEditingLocked}
+        writerState={writerState}
+        storagePersistence={storagePersistence}
+        onTakeOver={onTakeOver}
         onImport={onImport}
         onNavigateHistory={(direction) => {
           void onNavigateHistory(direction).then((restored) => {
@@ -102,7 +114,7 @@ export function WorkspaceShell({
           document={workspace.document}
           error={error}
           isSaving={isSaving}
-          isEditingLocked={hasYamlDraft}
+          isEditingLocked={isEditingLocked}
           library={library}
           checkpoints={checkpoints}
           onCreateCheckpoint={onCreateCheckpoint}
@@ -145,8 +157,8 @@ export function WorkspaceShell({
         <PlanEditor
           ref={planEditor}
           isSaving={isSaving}
-          isReadOnly={hasYamlDraft}
-          isTransitionPending={() => hasYamlDraft || isTransitionPending()}
+          isReadOnly={isEditingLocked}
+          isTransitionPending={() => isEditingLocked || isTransitionPending()}
           library={library}
           operationError={operationError}
           workspace={workspace}
@@ -157,6 +169,7 @@ export function WorkspaceShell({
           diagnostics={yamlDiagnostics}
           hasDraft={hasYamlDraft}
           isSaving={isSaving}
+          isReadOnly={isWriterLocked}
           yaml={yaml}
           onApply={onApplyYaml}
           onChange={onYamlChange}

@@ -16,8 +16,11 @@ interface WorkspaceHeaderProps {
   isDesignProposal: boolean;
   isSaving: boolean;
   isEditingLocked: boolean;
+  writerState: "acquiring" | "writer" | "readonly" | "unsupported";
+  storagePersistence: "checking" | "persistent" | "temporary" | "unavailable";
   onImport: ChangeEventHandler<HTMLInputElement>;
   onNavigateHistory(direction: "undo" | "redo"): void;
+  onTakeOver(): void;
   projectName: string;
   yaml: string;
   checkpoints: readonly ProjectCheckpoint[];
@@ -30,8 +33,11 @@ export function WorkspaceHeader({
   isDesignProposal,
   isSaving,
   isEditingLocked,
+  writerState,
+  storagePersistence,
   onImport,
   onNavigateHistory,
+  onTakeOver,
   projectName,
   yaml,
   checkpoints
@@ -45,6 +51,11 @@ export function WorkspaceHeader({
         <h1>{projectName}</h1>
       </div>
       <div className="header-actions">
+        {writerState === "readonly" ? (
+          <button type="button" className="secondary-button" onClick={onTakeOver}>
+            Take over editing
+          </button>
+        ) : null}
         <button
           type="button"
           className="secondary-button"
@@ -81,6 +92,14 @@ export function WorkspaceHeader({
         >
           Export Archive
         </button>
+      </div>
+      <div className="offline-status" role="status">
+        {writerState === "writer" ? "Editing in this tab" : null}
+        {writerState === "readonly" ? "Read-only: another tab is editing" : null}
+        {writerState === "acquiring" ? "Checking project writer…" : null}
+        {writerState === "unsupported" ? "Editing (browser lock unavailable)" : null}
+        {storagePersistence === "persistent" ? " · Storage protected" : null}
+        {storagePersistence === "temporary" ? " · Storage may be cleared" : null}
       </div>
     </header>
   );

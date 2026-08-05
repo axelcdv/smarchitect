@@ -241,6 +241,10 @@ export function ProjectSidebar({
       </dl>
       {error ? <p className="error-message">{error}</p> : null}
       <p className="panel-note">
+        Your project stays in this browser. Export a Project Archive regularly:
+        browser storage can be cleared even when persistent storage is requested.
+      </p>
+      <p className="panel-note">
         For early-stage space planning only. Consult qualified professionals
         before construction.
       </p>

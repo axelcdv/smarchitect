@@ -240,6 +240,7 @@ export function useAutosavedProject(repository?: ProjectRepository) {
     navigateHistory,
     editYaml,
     applyYaml,
+    flushAutosave: async () => projectRef.current?.flush(),
     isTransitionPending: () => transitionPending.current
   };
 }
