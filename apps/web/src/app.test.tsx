@@ -7,6 +7,7 @@ import {
   waitFor
 } from "@testing-library/react";
 import {
+  exportProjectArchive,
   ProjectHistory,
   ProjectWorkspace
 } from "@smarchitect/core";
@@ -259,6 +260,64 @@ describe("App project lifecycle and shell integration", () => {
     expect(createObjectUrl).toHaveBeenCalledOnce();
     expect(click).toHaveBeenCalledOnce();
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:project-document");
+  });
+
+  it("imports a Project Archive with named Checkpoints and restores one", async () => {
+    const current = ProjectWorkspace.create("Archive current").exportYaml();
+    const milestone = ProjectWorkspace.create("Archive milestone").exportYaml()
+      .replace("name: Archive milestone", "name: Archive milestone # retained");
+    const checkpoint = {
+      id: "checkpoint-imported",
+      name: "Measured baseline",
+      createdAt: "2026-08-03T10:00:00.000Z",
+      source: milestone
+    };
+    const bytes = exportProjectArchive(current, [checkpoint]);
+    const file = new File([bytes as Uint8Array<ArrayBuffer>], "home.zip", {
+      type: "application/zip"
+    });
+    Object.defineProperty(file, "arrayBuffer", {
+      value: async () => bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength
+      )
+    });
+
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Import Project Document"), {
+      target: { files: [file] }
+    });
+
+    expect(await screen.findByRole("heading", { name: "Archive current" }))
+      .toBeInTheDocument();
+    expect(screen.getByText("Measured baseline")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", {
+      name: "Restore Checkpoint Measured baseline"
+    }));
+
+    expect(await screen.findByRole("heading", { name: "Archive milestone" }))
+      .toBeInTheDocument();
+    expect((screen.getByLabelText(
+      "Project Document YAML"
+    ) as HTMLTextAreaElement).value).toContain("# retained");
+  });
+
+  it("creates a named Checkpoint without exposing autosaves as milestones", async () => {
+    render(<App />);
+    fireEvent.change(screen.getByLabelText("Project name"), {
+      target: { value: "Milestone home" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    await screen.findByRole("heading", { name: "Milestone home" });
+
+    expect(screen.getByText("0 named")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("New Checkpoint name"), {
+      target: { value: "Before demolition" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Checkpoint" }));
+
+    expect(await screen.findByText("Before demolition")).toBeInTheDocument();
+    expect(screen.getByText("1 named")).toBeInTheDocument();
   });
 
   it("previews and confirms an older Project Document migration", async () => {

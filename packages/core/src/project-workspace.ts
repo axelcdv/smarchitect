@@ -398,7 +398,10 @@ export class ProjectWorkspace {
     );
   }
 
-  static importYaml(source: string): ProjectWorkspace {
+  static importYaml(
+    source: string,
+    options: Pick<CreateProjectDocumentOptions, "idFactory" | "now"> = {}
+  ): ProjectWorkspace {
     const result = parseProjectDocument(source);
 
     if (!result.document) {
@@ -412,7 +415,12 @@ export class ProjectWorkspace {
     document.existingStateRevisedAt ??= new Date(0).toISOString();
     document.activePlan ??= { kind: "existing-state" };
     document.designProposals ??= [];
-    return new ProjectWorkspace(document, defaultIdFactory, source);
+    return new ProjectWorkspace(
+      document,
+      options.idFactory ?? defaultIdFactory,
+      source,
+      options.now
+    );
   }
 
   get document(): ProjectDocument {

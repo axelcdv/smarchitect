@@ -365,6 +365,99 @@ describe("autosaved project recovery", () => {
     expect(repository.snapshot).not.toHaveProperty("checkpoints");
   });
 
+  it("creates immutable project-wide Checkpoints and records their creation", async () => {
+    const repository = new MemoryProjectRepository();
+    const complete = ProjectWorkspace.create("Whole project")
+      .addWall({ start: { x: 0, y: 0 }, end: { x: 4000, y: 0 } })
+      .createDesignProposal("Kitchen option");
+    const project = await AutosavedProject.create(complete, repository);
+
+    const saved = await project.createCheckpoint("Measured baseline");
+    await project.accept(project.workspace.rename("Later project name"));
+
+    expect(project.checkpoints).toEqual([saved]);
+    expect(saved.source).toContain("Kitchen option");
+    expect(saved.source).toContain("x: 4000");
+    expect(saved.source).toContain("name: Whole project");
+    expect(project.checkpointHistory).toEqual([expect.objectContaining({
+      kind: "checkpoint-created",
+      checkpointId: saved.id,
+      checkpointName: "Measured baseline"
+    })]);
+    expect(repository.snapshot?.checkpoints).toEqual([saved]);
+  });
+
+  it("restores a Checkpoint as a durable new state while retaining later history", async () => {
+    const repository = new MemoryProjectRepository();
+    let project = await AutosavedProject.create(
+      ProjectWorkspace.create("Checkpoint state"),
+      repository
+    );
+    const saved = await project.createCheckpoint("Before changes");
+    await project.accept(project.workspace.rename("Later state"));
+
+    await project.restoreCheckpoint(saved.id);
+    project = (await AutosavedProject.restore(repository))!;
+
+    expect(project.workspace.document.name).toBe("Checkpoint state");
+    expect(project.checkpoints).toEqual([saved]);
+    expect(project.checkpointHistory.map(({ kind }) => kind)).toEqual([
+      "checkpoint-created",
+      "checkpoint-restored"
+    ]);
+    expect(repository.snapshot?.entries).toHaveLength(3);
+    expect((await project.undo()).document.name).toBe("Later state");
+  });
+
+  it("imports named Checkpoints into a fresh local project atomically", async () => {
+    const repository = new MemoryProjectRepository();
+    const workspace = ProjectWorkspace.create("Imported current");
+    const source = ProjectWorkspace.create("Imported milestone").exportYaml();
+    const importedCheckpoint = {
+      id: "checkpoint-imported",
+      name: "Imported milestone",
+      createdAt: "2026-08-03T10:00:00.000Z",
+      source
+    };
+
+    const project = await AutosavedProject.create(
+      workspace,
+      repository,
+      [importedCheckpoint]
+    );
+
+    expect(project.checkpoints).toEqual([importedCheckpoint]);
+    expect((await AutosavedProject.restore(repository))?.checkpoints)
+      .toEqual([importedCheckpoint]);
+  });
+
+  it("keeps Checkpoints immutable and leaves restoration unchanged on save failure", async () => {
+    const storage = new MemoryProjectRepository();
+    let rejectWrites = false;
+    const repository: ProjectRepository = {
+      load: () => storage.load(),
+      save: async (snapshot) => {
+        if (rejectWrites) throw new Error("storage unavailable");
+        await storage.save(snapshot);
+      }
+    };
+    const project = await AutosavedProject.create(
+      ProjectWorkspace.create("Checkpoint original"),
+      repository
+    );
+    const checkpoint = await project.createCheckpoint("Immutable milestone");
+    await project.accept(project.workspace.rename("Current state"));
+    (checkpoint as { source: string }).source = "changed outside";
+    rejectWrites = true;
+
+    await expect(project.restoreCheckpoint(checkpoint.id))
+      .rejects.toThrow("storage unavailable");
+
+    expect(project.workspace.document.name).toBe("Current state");
+    expect(project.checkpoints[0]?.source).toContain("Checkpoint original");
+    expect(project.checkpointHistory).toHaveLength(1);
+  });
+
   it("persists the active project when switching during a delayed autosave", async () => {
     const storage = new MemoryProjectRepository();
     let releaseFirstSave = () => {};

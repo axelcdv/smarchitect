@@ -24,13 +24,13 @@ export function ProjectImportControl({
         disabled={disabled}
         onClick={() => importInputRef.current?.click()}
       >
-        Import YAML
+        Import Project
       </button>
       <input
         ref={importInputRef}
         className="visually-hidden"
         type="file"
-        accept=".yaml,.yml,application/yaml,text/yaml"
+        accept=".yaml,.yml,.zip,application/yaml,text/yaml,application/zip"
         onChange={onImport}
         aria-label="Import Project Document"
         disabled={disabled}

@@ -3,9 +3,11 @@ import {
   type Diagnostic,
   type Level,
   type ProjectDocument,
+  type ProjectCheckpoint,
   type ProposalStaleness
 } from "@smarchitect/core";
 import { BufferedInput } from "../BufferedInput.js";
+import { useState } from "react";
 import { ItemLibrary } from "../ItemLibrary.js";
 import {
   type ItemKind,
@@ -21,6 +23,9 @@ interface ProjectSidebarProps {
   isSaving: boolean;
   isEditingLocked: boolean;
   library: ItemLibraryController;
+  checkpoints: readonly ProjectCheckpoint[];
+  onCreateCheckpoint(name: string): Promise<boolean>;
+  onRestoreCheckpoint(checkpointId: string): void;
   onCreateProposal(): void;
   onDeleteProposal(): void;
   onPlaceItem(kind: ItemKind, definitionId: string): void;
@@ -42,6 +47,9 @@ export function ProjectSidebar({
   isSaving,
   isEditingLocked,
   library,
+  checkpoints,
+  onCreateCheckpoint,
+  onRestoreCheckpoint,
   onCreateProposal,
   onDeleteProposal,
   onPlaceItem,
@@ -55,6 +63,7 @@ export function ProjectSidebar({
 }: ProjectSidebarProps) {
   const errorCount = diagnostics.filter(({ severity }) => severity === "error").length;
   const warningCount = diagnostics.filter(({ severity }) => severity === "warning").length;
+  const [checkpointName, setCheckpointName] = useState("");
   return (
     <aside className="project-panel" aria-label="Project properties">
       <label className="field">
@@ -142,6 +151,56 @@ export function ProjectSidebar({
             {new Date(proposalStaleness.currentRevisedAt).toLocaleString()}.
           </p>
         ) : null}
+      </section>
+      <section className="checkpoint-manager" aria-labelledby="checkpoint-title">
+        <div className="proposal-heading">
+          <h2 id="checkpoint-title">Checkpoints</h2>
+          <span>{checkpoints.length} named</span>
+        </div>
+        <div className="proposal-create">
+          <input
+            aria-label="New Checkpoint name"
+            value={checkpointName}
+            disabled={isSaving || isEditingLocked}
+            placeholder="Milestone name"
+            onChange={(event) => setCheckpointName(event.target.value)}
+          />
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={isSaving || isEditingLocked || !checkpointName.trim()}
+            onClick={() => {
+              void onCreateCheckpoint(checkpointName).then((created) => {
+                if (created) setCheckpointName("");
+              });
+            }}
+          >
+            Create Checkpoint
+          </button>
+        </div>
+        {checkpoints.length ? (
+          <ol className="checkpoint-list">
+            {checkpoints.map((checkpoint) => (
+              <li key={checkpoint.id}>
+                <div>
+                  <strong>{checkpoint.name}</strong>
+                  <small>{new Date(checkpoint.createdAt).toLocaleString()}</small>
+                </div>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={isSaving || isEditingLocked}
+                  onClick={() => onRestoreCheckpoint(checkpoint.id)}
+                  aria-label={`Restore Checkpoint ${checkpoint.name}`}
+                >
+                  Restore
+                </button>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <p className="panel-note">Autosaves stay separate from named milestones.</p>
+        )}
       </section>
       <div className="level-card">
         <span className="level-index">01</span>

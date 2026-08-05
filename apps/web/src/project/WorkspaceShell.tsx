@@ -1,4 +1,8 @@
-import type { Diagnostic, ProjectWorkspace } from "@smarchitect/core";
+import type {
+  Diagnostic,
+  ProjectCheckpoint,
+  ProjectWorkspace
+} from "@smarchitect/core";
 import {
   useRef,
   useState,
@@ -25,13 +29,16 @@ export interface WorkspaceShellProps {
   canRedo: boolean;
   importInputRef: RefObject<HTMLInputElement | null>;
   library: ItemLibraryController;
+  checkpoints: readonly ProjectCheckpoint[];
   isTransitionPending(): boolean;
   onCommit(next: ProjectWorkspace): Promise<ProjectWorkspace | undefined>;
+  onCreateCheckpoint(name: string): Promise<boolean>;
   onApplyYaml(): void;
   onImport(event: ChangeEvent<HTMLInputElement>): void;
   onNavigateHistory(direction: "undo" | "redo"): Promise<boolean>;
   onOperationError(message: string): void;
   onRenameProject(value: string): void;
+  onRestoreCheckpoint(checkpointId: string): Promise<boolean>;
   onYamlChange(value: string): void;
   yamlDiagnostics: Diagnostic[];
 }
@@ -47,13 +54,16 @@ export function WorkspaceShell({
   canRedo,
   importInputRef,
   library,
+  checkpoints,
   isTransitionPending,
   onCommit,
+  onCreateCheckpoint,
   onApplyYaml,
   onImport,
   onNavigateHistory,
   onOperationError,
   onRenameProject,
+  onRestoreCheckpoint,
   onYamlChange,
   yamlDiagnostics
 }: WorkspaceShellProps) {
@@ -70,6 +80,7 @@ export function WorkspaceShell({
       <WorkspaceHeader
         canRedo={canRedo}
         canUndo={canUndo}
+        checkpoints={checkpoints}
         importInputRef={importInputRef}
         isDesignProposal={Boolean(activeProposal)}
         isSaving={isSaving}
@@ -81,7 +92,7 @@ export function WorkspaceShell({
           });
         }}
         projectName={workspace.document.name}
-        yaml={yaml}
+        yaml={workspace.exportYaml()}
       />
       <section className="workspace-grid">
         <ProjectSidebar
@@ -93,6 +104,8 @@ export function WorkspaceShell({
           isSaving={isSaving}
           isEditingLocked={hasYamlDraft}
           library={library}
+          checkpoints={checkpoints}
+          onCreateCheckpoint={onCreateCheckpoint}
           onCreateProposal={() => {
             void changeActivePlan(
               workspace.createDesignProposal(proposalName)
@@ -109,6 +122,11 @@ export function WorkspaceShell({
             planEditor.current?.beginItemPlacement(kind, definitionId)}
           onProposalNameChange={setProposalName}
           onRenameProject={onRenameProject}
+          onRestoreCheckpoint={(checkpointId) => {
+            void onRestoreCheckpoint(checkpointId).then((restored) => {
+              if (restored) planEditor.current?.clearSelection();
+            });
+          }}
           onRenameProposal={(value) => {
             if (activeProposal) {
               void onCommit(workspace.renameDesignProposal(

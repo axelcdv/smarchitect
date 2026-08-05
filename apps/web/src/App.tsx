@@ -1,7 +1,11 @@
 import {
   ProjectValidationError,
   ProjectWorkspace,
+  importProjectArchive,
+  previewProjectArchiveMigration,
   previewProjectDocumentMigration,
+  type ProjectArchiveMigrationPreview,
+  type ProjectCheckpoint,
   type ProjectDocumentMigrationPreview
 } from "@smarchitect/core";
 import {
@@ -12,6 +16,7 @@ import {
 import {
   WorkspaceShell
 } from "./project/WorkspaceShell.js";
+import { ProjectArchiveMigrationDialog } from "./project/ProjectArchiveMigrationDialog.js";
 import { SchemaMigrationDialog } from "./project/SchemaMigrationDialog.js";
 import type { ProjectRepository } from "./project-persistence.js";
 import { WelcomeScreen } from "./project/WelcomeScreen.js";
@@ -28,6 +33,8 @@ export function App({ projectRepository }: AppProps = {}) {
   const [operationError, setOperationError] = useState("");
   const [migrationPreview, setMigrationPreview] =
     useState<ProjectDocumentMigrationPreview>();
+  const [archiveMigrationPreview, setArchiveMigrationPreview] =
+    useState<ProjectArchiveMigrationPreview>();
   const importInput = useRef<HTMLInputElement>(null);
   const library = useItemLibrary(setOperationError);
   const autosavedProject = useAutosavedProject(projectRepository);
@@ -40,6 +47,7 @@ export function App({ projectRepository }: AppProps = {}) {
     isSaving,
     canUndo,
     canRedo,
+    checkpoints,
     isTransitionPending
   } = autosavedProject;
   const error = persistenceError || operationError;
@@ -52,8 +60,11 @@ export function App({ projectRepository }: AppProps = {}) {
     return durable;
   }
 
-  async function startAutosave(next: ProjectWorkspace): Promise<boolean> {
-    const started = await autosavedProject.startAutosave(next);
+  async function startAutosave(
+    next: ProjectWorkspace,
+    importedCheckpoints: readonly ProjectCheckpoint[] = []
+  ): Promise<boolean> {
+    const started = await autosavedProject.startAutosave(next, importedCheckpoints);
     if (started) setOperationError("");
     return started;
   }
@@ -91,6 +102,26 @@ export function App({ projectRepository }: AppProps = {}) {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
+      if (
+        file.name.toLowerCase().endsWith(".zip")
+        || file.type === "application/zip"
+      ) {
+        const archiveBytes = new Uint8Array(await file.arrayBuffer());
+        const archivePreview = previewProjectArchiveMigration(archiveBytes);
+        if (archivePreview) {
+          setArchiveMigrationPreview(archivePreview);
+          setOperationError("");
+          return;
+        }
+        const importedArchive = importProjectArchive(archiveBytes);
+        if (await startAutosave(
+          importedArchive.workspace,
+          importedArchive.checkpoints
+        )) {
+          setDraftName(importedArchive.workspace.document.name);
+        }
+        return;
+      }
       const source = await file.text();
       let imported: ProjectWorkspace;
       try {
@@ -108,7 +139,9 @@ export function App({ projectRepository }: AppProps = {}) {
         }
         throw cause;
       }
-      if (await startAutosave(imported)) setDraftName(imported.document.name);
+      if (await startAutosave(imported)) {
+        setDraftName(imported.document.name);
+      }
     } catch (cause) {
       setOperationError(cause instanceof ProjectValidationError
         ? cause.diagnostics.map(({ message }) => message).join(" ")
@@ -135,12 +168,29 @@ export function App({ projectRepository }: AppProps = {}) {
     }
   }
 
+  async function confirmArchiveMigration(): Promise<void> {
+    if (!archiveMigrationPreview) return;
+    const { imported } = archiveMigrationPreview;
+    if (await startAutosave(imported.workspace, imported.checkpoints)) {
+      setDraftName(imported.workspace.document.name);
+      setArchiveMigrationPreview(undefined);
+    }
+  }
+
   const migrationDialog = migrationPreview ? (
     <SchemaMigrationDialog
       isSaving={isSaving}
       preview={migrationPreview}
       onCancel={() => setMigrationPreview(undefined)}
       onConfirm={() => void confirmMigration()}
+    />
+  ) : null;
+  const archiveMigrationDialog = archiveMigrationPreview ? (
+    <ProjectArchiveMigrationDialog
+      isSaving={isSaving}
+      preview={archiveMigrationPreview}
+      onCancel={() => setArchiveMigrationPreview(undefined)}
+      onConfirm={() => void confirmArchiveMigration()}
     />
   ) : null;
 
@@ -157,6 +207,7 @@ export function App({ projectRepository }: AppProps = {}) {
           onImport={(event) => void importProject(event)}
         />
         {migrationDialog}
+        {archiveMigrationDialog}
       </>
     );
   }
@@ -166,6 +217,7 @@ export function App({ projectRepository }: AppProps = {}) {
       <WorkspaceShell
       canRedo={canRedo}
       canUndo={canUndo}
+      checkpoints={checkpoints}
       error={error}
       operationError={operationError}
       importInputRef={importInput}
@@ -178,13 +230,16 @@ export function App({ projectRepository }: AppProps = {}) {
       yamlDiagnostics={yamlDiagnostics}
       onApplyYaml={() => void autosavedProject.applyYaml()}
       onCommit={commit}
+      onCreateCheckpoint={autosavedProject.createCheckpoint}
       onImport={(event) => void importProject(event)}
       onNavigateHistory={navigateHistory}
       onOperationError={setOperationError}
       onRenameProject={(value) => void renameProject(value)}
+      onRestoreCheckpoint={autosavedProject.restoreCheckpoint}
       onYamlChange={autosavedProject.editYaml}
       />
       {migrationDialog}
+      {archiveMigrationDialog}
     </>
   );
 }
